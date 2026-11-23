@@ -1,16 +1,16 @@
 import { readFile } from "node:fs/promises";
+import definitions from "../labels/base.json";
 import { describe, expect, it, vi } from "vitest";
 import { labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
 import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/arbitrary-repository";
-const base = { name: "🤖 Under review", color: "840479", description: "" };
+const base = { name: "🤖 Review", color: "840479", description: "" };
 const approved = { name: "🤖 Approved", color: "1a7f37", description: "" };
-const changesNeeded = { name: "🤖 Changes needed", color: "9a6700", description: "" };
+const changesNeeded = { name: "🤖 Rework", color: "9a6700", description: "" };
 const palette = [base, approved, changesNeeded];
 const custom = { name: "custom", color: "abcdef", description: "keep me", default: false };
-const manifest = () => ({ version: 1, labels: { "under-review": { ...base },
-  "review-approved": { ...approved }, "review-changes-needed": { ...changesNeeded } } });
+const manifest = () => structuredClone(definitions);
 const creates = (repository: string) => palette.map(label => ["POST", `repos/${repository}/labels`, label]);
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app-secret", GH_TOKEN: "app-secret", ...extra });
@@ -52,8 +52,8 @@ describe("central base-label definitions", () => {
   it("matches all three exact robot definitions, including empty descriptions and no variation selectors", async () => {
     const actual = await loadBaseLabels();
     expect(actual).toEqual(manifest());
-    for (const [label, suffix] of [[actual.labels["under-review"], "Under review"],
-      [actual.labels["review-approved"], "Approved"], [actual.labels["review-changes-needed"], "Changes needed"]] as const) {
+    for (const [label, suffix] of [[actual.labels["under-review"], "Review"],
+      [actual.labels["review-approved"], "Approved"], [actual.labels["review-changes-needed"], "Rework"]] as const) {
       expect([...label.name].map(value => value.codePointAt(0))).toEqual([0x1f916, 32, ...[...suffix].map(value => value.codePointAt(0))]);
     }
   });
@@ -104,7 +104,7 @@ describe("central base-label definitions", () => {
     }
   });
 
-  it("adds only the missing verdict definitions to an existing Under review palette", async () => {
+  it("adds only the missing verdict definitions to an existing Review palette", async () => {
     const api = reads([base, custom]);
     const result = await syncLabels({ repository, api, apply: true });
     expect(result.labels.map(label => label.action)).toEqual(["unchanged", "create", "create"]);
