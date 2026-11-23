@@ -143,47 +143,61 @@ when every outcome is ticked and the body is valid, and there is nothing to fina
 
 ### Final agent review labels
 
-Delivery labels are enabled by default: the next forwarded delivery event syncs the base palette without
-per-repository setup. The calling repository's `DELIVERY_LABELS_ENABLED=false` is the explicit opt-out for both
-automatic writers (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value
-remain enabled. Do not create or change review labels for an opted-out repository. Once the base palette is
-available, whoever runs the agent review owns these three assignments from the shared `labels/base.json`,
-each with an empty description:
+Delivery labels are enabled by default on the next forwarded delivery event, without per-repository setup.
+The calling repository's `DELIVERY_LABELS_ENABLED=false` opts out of both automatic writers (case-insensitive, without whitespace
+trimming). Unset, empty, `true` and any other value remain enabled. Do not create or change review labels when opted out.
+`labels/base.json` publishes version 1 with three permanently stable role keys, editable names and `previousNames` arrays:
 
-| Key | GitHub name | Color |
-| --- | --- | --- |
-| `under-review` | 🤖 Under review | `840479` |
-| `review-approved` | 🤖 Approved | `1a7f37` |
-| `review-changes-needed` | 🤖 Changes needed | `9a6700` |
+| Key | Initial name | Color | Previous names |
+| --- | --- | --- | --- |
+| `under-review` | 🤖 Review | `840479` | 🤖 Under review |
+| `review-approved` | 🤖 Approved | `1a7f37` | none |
+| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
 
-Every name starts with U+1F916 and one ordinary space, with no variation selector. Use the review runner's
-signed-in credential, not the delivery App private key, and plain PR add-label/remove-label operations;
-no lease, heartbeat or dispatch protocol exists.
+Initially each has an empty description, U+1F916 and one ordinary space, with no variation selector.
+Future valid names can omit the robot prefix. Never identify a role from a display name. MyWorkflows' GitHub
+Labels page is the reference, tied to each key by its source GitHub id/node id. Valid UI edits are published
+through a protected manifest-update bot PR which the person merges, then consumers sync on their next delivery event.
+Created/unmanaged labels are not adopted; a deleted reference warns, never deletes consumers or silently rebinds identities.
+`delivery labels-reference` reports missed-event reconciliation; explicit `--apply` publishes only a topic branch/PR.
+Do not run it or any live label apply/prune without separate named-repository authorization.
 
-- At review start, add Under review and remove any previous verdict label (both Approved and Changes needed)
-  before launching the reviewer, even if the PR is draft or CI is pending.
-- On `APPROVE`, remove Under review and add Approved; on `CHANGES NEEDED`, remove Under review and add Changes needed.
-  Verdicts are mutually exclusive; remove any opposite verdict and preserve unrelated labels.
-- On failed launch/report, stop, finish, observed death or abandonment, remove Under review without inventing a
-  verdict. Make retries idempotent, preserve all other labels and report permission/API failures.
-  Confirm access and absence before treating a remove-label 404 as success.
-- Complete old cleanup before replacing a reviewer. Use one owner per PR, or retain the label until that owner's
-  last local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
-- All three labels are advisory: never make them a required check or merge gate; absence is not approval.
-  A retained verdict records a review result, not a guarantee that later commits were reviewed.
-  Unless opted out, on successfully processed closed/merged PR events the shared workflow removes ONLY Under review;
-  Approved and Changes needed survive closure as a review record. Cleanup never removes or adds a verdict label.
-  It does not observe crew reports, guarantee timed crash expiry, or sweep historical PRs. A lost runner leaves
-  an open PR labeled until existing recovery or a person clears it. Crew hooks are a separate integration task
-  in timurproko/crew PR #7, not implemented here.
-- Callers tracking `main` need no edit; idle repositories wait for their next delivery event. Version-pinned
-  callers must update both the workflow reference and matching `tools_ref` to a revision containing this policy;
-  a workflow pin alone leaves scripts on the existing `tools_ref` default of `main` unless explicitly aligned.
-- The isolated label jobs use existing App Pull requests write permission; missing rights produce visible
-  warnings, not promotion/finalization or required-check failures. Manual dry runs stay read-only even when
-  opted out. Sync never deletes labels; optional default-label pruning remains a separate explicit manual
-  command and maintainer decision. Implementation approval does not authorize setting variables, applying
-  permissions, pruning or other live label writes.
+- At each review operation fetch one consistent manifest snapshot from the configured source (default
+  `timurproko/MyWorkflows`) with `GET /repos/{source}/contents/labels/base.json` and
+  `Accept: application/vnd.github.raw+json`. Omitting `ref` resolves the default branch; explicitly discovering
+  `default_branch` then fetching that ref is equivalent. Validate version 1, all three stable keys, names and
+  `previousNames` arrays; tolerate extra reference metadata. Never treat source ids as consumer label ids.
+- A runner MAY use built-in initial names plus legacy aliases on read/validation failure **if it warns**;
+  never fall back silently. Crew uses one contents request without `ref`, with a two-second timeout.
+  Fallback cannot discover future UI names and may leave them untouched until manifest access recovers;
+  it is not successful synchronization and is not a fallback for MyWorkflows' sync/reconciliation scripts.
+- Use the runner's signed-in credential, not the delivery App private key, and ordinary PR label operations.
+  At review start, add current `under-review` and clear both verdict keys' current/historical assignments
+  before launching the reviewer, even on a draft or pending-CI PR. Resolve the implementation PR, not a Plan report.
+- On `APPROVE`, clear current/historical review-in-progress and opposite-verdict assignments and add current
+  `review-approved`; on `CHANGES NEEDED`, do the same and add current `review-changes-needed`.
+  Verdicts are mutually exclusive; preserve unrelated labels.
+- On failed launch/report, stop, finish, observed death or abandonment, clear current/historical in-progress
+  assignments without inventing a verdict. Make retries idempotent and report permission/API failures.
+  Confirm access and absence before treating a remove-label 404 as success. Never replace the whole label set.
+- Complete old cleanup before replacement. Use one owner per PR or retain the label until that owner's last
+  local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
+- All three labels are advisory, never required checks or merge gates; absence is not approval. A retained
+  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes only `under-review`
+  current/historical assignments and preserves both verdict keys' current/historical records. No verdict is added.
+  Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or historical sweep. A lost runner
+  may leave an open PR labeled until recovery or a person clears it. Crew integration is separate work in crew.
+- Consumer sync renames an existing previous-name definition with PATCH `new_name`, preserving assignments.
+  When old and new both exist, keep the new definition, retain/report the old one and never delete automatically.
+  Reference snapshot/pending-PR guards prevent ordinary sync from overwriting unmerged UI drift; GitHub has no
+  atomic read/PATCH guard. Initial exact-snapshot reversion before its event is observed remains a bootstrap race.
+- Callers tracking `main` need no edit; idle repositories wait. Pinned callers must align the workflow reference
+  and matching `tools_ref`. Existing App Pull requests write suffices; no added Issues grant is needed.
+  Missing rights warn independently of promotion/finalization or required checks. Manual dry runs stay read-only.
+  Optional default pruning excludes managed current/historical names and needs separate explicit consent.
+  Implementation approval never authorizes variables, permissions, pruning or live label writes.
+
+See `docs/delivery-labels.md` in MyWorkflows for the complete manifest/API, transition and recovery contract.
 
 ## 6. Merge
 

@@ -260,7 +260,7 @@ jobs:
           private-key: ${{ secrets.app_private_key }}
           permission-pull-requests: write
 
-      - name: Remove only Under review or report explicit opt-out
+      - name: Clear current and historical review-in-progress names or report opt-out
         env:
           GH_TOKEN: ${{ steps.cleanup-app.outputs.token }}
           LABELS_APP_TOKEN: ${{ steps.cleanup-app.outputs.token }}

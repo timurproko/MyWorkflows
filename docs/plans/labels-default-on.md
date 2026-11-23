@@ -1,5 +1,7 @@
 # Delivery labels enabled by default
 
+Historical plan: display names and metadata authority are superseded by [reference-driven renames](label-rename.md). Old names below describe that historical snapshot, not the current runner contract; the default-on policy still applies.
+
 ## Proposal
 
 Make base-label synchronization and closed-pull-request Under review cleanup the default behavior of the shared delivery workflow, without per-repository setup. Retain a single explicit opt-out and all existing safety boundaries from the implementation merged in #25.

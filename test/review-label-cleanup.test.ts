@@ -1,16 +1,21 @@
 import { readFile } from "node:fs/promises";
+import definitions from "./fixtures/bootstrap-labels.json";
 import { describe, expect, it, vi } from "vitest";
-import { cleanupReviewLabel } from "../scripts/review-label-cleanup.mjs";
-import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
+import { cleanupReviewLabel as cleanup } from "../scripts/review-label-cleanup.mjs";
+import { automationMain as automateMain, runLabelAutomation as automate } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/repository";
-const name = "🤖 Under review";
+const cleanupReviewLabel = options => cleanup({ manifest: structuredClone(definitions), ...options });
+const runLabelAutomation = options => automate({ manifest: structuredClone(definitions), ...options });
+const automationMain = options => automateMain({ manifest: structuredClone(definitions), ...options });
+const name = definitions.labels["under-review"].name;
+const oldName = definitions.labels["under-review"].previousNames[0];
 const event = (merged = true, target = repository) => ({ action: "closed", number: 14, repository: { full_name: target },
   pull_request: { number: 14, state: "closed", merged, base: { ref: "non-default-target", repo: { full_name: target } }, user: { login: "dependabot[bot]" } } });
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app", GH_TOKEN: "app", LABELS_OPERATION: "cleanup", ...extra });
 
-function fake({ target = repository, states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true } = {}) {
+function fake({ target = repository, states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true, removableNames = [name, oldName] } = {}) {
   let reads = 0, attemptedDelete = false;
   const applied = [...labels];
   const api = vi.fn(async (method: string, path: string) => {
@@ -24,9 +29,11 @@ function fake({ target = repository, states = ["closed"], labels = [name, "keep-
     }
     if (method === "DELETE") {
       attemptedDelete = true;
-      expect(path).toBe(`repos/${target}/issues/14/labels/%F0%9F%A4%96%20Under%20review`);
+      const removed = decodeURIComponent(path.split("/").at(-1)!);
+      expect(removableNames).toContain(removed);
+      expect(path).toBe(`repos/${target}/issues/14/labels/${encodeURIComponent(removed)}`);
       if (!deleteStatus || (deleteStatus === 404 && removeOn404)) {
-        const index = applied.indexOf(name);
+        const index = applied.indexOf(removed);
         if (index >= 0) applied.splice(index, 1);
       }
       if (deleteStatus) throw Object.assign(new Error("delete failed"), { status: deleteStatus });
@@ -50,7 +57,7 @@ describe("closed-PR advisory review-label cleanup", () => {
         expect(applied).toEqual(["keep-me"]);
         expect(api.mock.calls.every(([, path]) => path.startsWith(`repos/${repository}/`))).toBe(true);
         expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([
-          ["DELETE", `repos/${repository}/issues/14/labels/%F0%9F%A4%96%20Under%20review`],
+          ["DELETE", `repos/${repository}/issues/14/labels/${encodeURIComponent(name)}`],
         ]);
       }
     }
@@ -72,8 +79,9 @@ describe("closed-PR advisory review-label cleanup", () => {
 
   it.each([
     { verdicts: ["🤖 Approved"] },
+    { verdicts: ["🤖 Rework"] },
     { verdicts: ["🤖 Changes needed"] },
-    { verdicts: ["🤖 Approved", "🤖 Changes needed"] },
+    { verdicts: ["🤖 Approved", "🤖 Rework", "🤖 Changes needed"] },
   ])("preserves verdict record $verdicts on every closure path", async ({ verdicts }) => {
     for (const merged of [true, false]) {
       for (const underReview of [true, false]) {
@@ -89,11 +97,37 @@ describe("closed-PR advisory review-label cleanup", () => {
           expect(applied).toEqual(retained);
           // No verdict removal/addition, repository-definition deletion or unrelated assignment change.
           expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(underReview ? [
-            ["DELETE", `repos/${repository}/issues/14/labels/%F0%9F%A4%96%20Under%20review`],
+            ["DELETE", `repos/${repository}/issues/14/labels/${encodeURIComponent(name)}`],
           ] : []);
         }
       }
     }
+  });
+
+  it.each([[oldName], [name, oldName]])("clears current and legacy review names together without touching any verdict", async (...reviewNames) => {
+    const verdicts = ["🤖 Approved", "🤖 Rework", "🤖 Changes needed"];
+    for (const merged of [true, false]) {
+      const { api, applied } = fake({ labels: [...reviewNames, ...verdicts] });
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("removed");
+      expect(applied).toEqual(verdicts);
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("absent");
+    }
+  });
+
+  it("resolves arbitrary future current and historical names by key and preserves historical verdicts", async () => {
+    const reviewNames = ["Reading", "Earlier reading", "Oldest reading"];
+    const verdicts = ["Good", "Previously good", "Revise", "Previously revise"];
+    const manifest = { version: 1, labels: {
+      "under-review": { name: reviewNames[0], previousNames: reviewNames.slice(1), color: "840479", description: "" },
+      "review-approved": { name: verdicts[0], previousNames: [verdicts[1]], color: "1a7f37", description: "" },
+      "review-changes-needed": { name: verdicts[2], previousNames: [verdicts[3]], color: "9a6700", description: "" },
+    } };
+    const { api, applied } = fake({ labels: [...reviewNames, ...verdicts, "other"], removableNames: reviewNames });
+    await cleanupReviewLabel({ repository, event: event(), api, manifest });
+    expect(applied).toEqual([...verdicts, "other"]);
+    const reopened = fake({ labels: [name, oldName], states: ["closed", "closed", "open"] });
+    expect((await cleanupReviewLabel({ repository, event: event(), api: reopened.api })).disposition).toBe("reopened");
+    expect(reopened.applied).toEqual([oldName]);
   });
 
   it("is idempotent on duplicate close events and missing assignments", async () => {
@@ -118,6 +152,23 @@ describe("closed-PR advisory review-label cleanup", () => {
     const source = fake({ states: states as string[] });
     expect((await cleanupReviewLabel({ repository, event: event(), api: source.api })).disposition).toBe("reopened");
     expect(source.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
+  });
+
+  it.each([true, false])("rescans current and historical names when sync renames an assignment before DELETE, merged=%s", async merged => {
+    for (const reopened of [false, true]) {
+      const source = fake({ labels: [oldName, "🤖 Approved", "🤖 Rework"], states: ["closed", "closed", reopened ? "open" : "closed"] });
+      const api = vi.fn(async (method: string, path: string) => {
+        if (method === "DELETE" && path.endsWith(encodeURIComponent(oldName))) {
+          // Independent sync PATCH renames the definition and its assignment after the old-name read.
+          source.applied[source.applied.indexOf(oldName)] = name;
+          throw Object.assign(new Error("old definition name no longer exists"), { status: 404 });
+        }
+        return source.api(method, path);
+      });
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe(reopened ? "reopened" : "removed");
+      expect(source.applied).toEqual([...(reopened ? [name] : []), "🤖 Approved", "🤖 Rework"]);
+      expect(api.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => decodeURIComponent(path.split("/").at(-1)!))).toEqual(reopened ? [oldName] : [oldName, name]);
+    }
   });
 
   it("confirms access and absence before treating DELETE 404 as idempotent", async () => {
@@ -177,7 +228,7 @@ describe("closed-PR advisory review-label cleanup", () => {
     const source = fake();
     const report = vi.fn();
     expect(await automationMain({ environment: environment(), event: event(), api: source.api, report })).toBe(0);
-    expect(report).toHaveBeenCalledWith("Under review closed-PR cleanup: removed.");
+    expect(report).toHaveBeenCalledWith("Review-in-progress closed-PR cleanup: removed.");
     const denied = fake({ deleteStatus: 403 });
     expect(await automationMain({ environment: environment(), event: event(), api: denied.api, report })).toBe(1);
     expect(report).toHaveBeenCalledWith(expect.stringContaining("::warning::Delivery label automation failed (HTTP 403)"));
