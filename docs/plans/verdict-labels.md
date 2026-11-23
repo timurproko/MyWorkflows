@@ -36,7 +36,7 @@ These groups match the draft PR's Implementation checklist, in order.
 - Add the two version-1 definitions to `labels/base.json` with the exact keys, Unicode names, colors and empty descriptions above.
 - Update manifest enumeration and sync expectations in `test/repository-labels.test.ts` for the complete palette: exact fields/code points, read-only diff, creation, metadata updates, unchanged definitions and default-on automation.
 - Keep focused single-label fixtures explicitly scoped where useful; do not weaken collision, no-deletion, opt-out or permissions coverage.
-- Leave `scripts/repository-labels.mjs` and owner/name validation untouched. Pull request #27 (`fix/labels-dot-repo`) is in flight; reconcile overlapping test changes with its latest merged default-branch version before final delivery.
+- Leave `scripts/repository-labels.mjs` and owner/name validation untouched. Pull request #27 (`fix/labels-dot-repo`) merged as `77d2225` and is incorporated into this branch; preserve its dotted/leading-dot repository-name coverage when updating overlapping tests.
 
 ### 2. Closed-event regression tests preserve both verdict labels on merged and unmerged closures while clearing only Under review
 
@@ -55,4 +55,4 @@ These groups match the draft PR's Implementation checklist, in order.
 
 Inspection found that `scripts/review-label-cleanup.mjs` selects only `manifest.labels["under-review"].name` and deletes only that assignment. The reusable workflow's isolated `review-label-cleanup` job invokes this script for closed events; it does not enumerate the palette for deletion. This already satisfies the intended runtime scope, but needs explicit verdict-preservation regression coverage.
 
-The baseline full suite passed under Node 24.22.0: `npm ci --ignore-scripts` followed by `npm test`, 28 files and 359 tests passing. After approval, use targeted tests as each outcome lands, then run the entire suite once before implementation handoff. Check the final PR body with `delivery check-body`, bring the branch up to date with the actual default branch, and report any failures honestly. Do not mark the PR ready, merge it, or write live labels.
+The original baseline full suite passed under Node 24.22.0: `npm ci --ignore-scripts` followed by `npm test`, 28 files and 359 tests passing. After incorporating #27, the full suite ran again: 431 tests passed and one unchanged bootstrap test exceeded its 5000 ms timeout (29 files, 432 tests total). A focused rerun of `test/bootstrap.test.ts` passed all six tests without modifications; the full-run timeout remains reported, not hidden. After approval, use targeted tests as each outcome lands, then run the entire suite once before implementation handoff. Check the final PR body with `delivery check-body`, bring the branch up to date with the actual default branch, and report any failures honestly. Do not mark the PR ready, merge it, or write live labels.
