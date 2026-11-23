@@ -3,6 +3,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
+    labels: []
     directory: /
     schedule:
       interval: daily
@@ -10,6 +11,7 @@ updates:
       prefix: chore
     open-pull-requests-limit: 5
   - package-ecosystem: github-actions
+    labels: []
     directory: /
     schedule:
       interval: weekly
