@@ -1,13 +1,18 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { labelApi, syncLabels, validateRepository } from "./repository-labels.mjs";
+import { cleanupReviewLabel } from "./review-label-cleanup.mjs";
 
-export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log } = {}) {
+export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log, event } = {}) {
   if (environment.GITHUB_ACTIONS !== "true" || !["pull_request_target", "workflow_dispatch", "workflow_run"].includes(environment.GITHUB_EVENT_NAME)) {
     throw new Error("label automation requires a trusted delivery event");
   }
-  const dryRun = environment.GITHUB_EVENT_NAME === "workflow_dispatch" && environment.LABELS_DRY_RUN === "true";
+  const operation = environment.LABELS_OPERATION ?? "sync";
+  if (!["sync", "cleanup"].includes(operation) || (operation === "cleanup" && environment.GITHUB_EVENT_NAME !== "pull_request_target")) {
+    throw new Error("invalid internal label operation for this event");
+  }
+  const dryRun = operation === "sync" && environment.GITHUB_EVENT_NAME === "workflow_dispatch" && environment.LABELS_DRY_RUN === "true";
   if (environment.DELIVERY_LABELS_ENABLED !== "true" && !dryRun) {
     report("Delivery labels are disabled; pending maintainer enablement of DELIVERY_LABELS_ENABLED=true. Nothing was changed.");
     return { disposition: "disabled" };
@@ -15,6 +20,12 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   const repository = validateRepository(environment.GITHUB_REPOSITORY);
   if (!dryRun && (!environment.LABELS_APP_TOKEN || environment.GH_TOKEN !== environment.LABELS_APP_TOKEN)) {
     throw new Error("label writes require the separate delivery App token with Pull requests write");
+  }
+  if (operation === "cleanup") {
+    event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));
+    const result = await cleanupReviewLabel({ repository, event, api });
+    report(`Under review closed-PR cleanup: ${result.disposition}.`);
+    return result;
   }
   const result = await syncLabels({ repository, apply: !dryRun, api });
   // Names/descriptions from the API are data, not workflow commands or summary markup.
