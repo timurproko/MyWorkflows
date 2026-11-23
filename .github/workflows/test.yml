@@ -23,3 +23,5 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Generated reference manifests pass the entire suite untouched
+        run: node test/generated-palettes.mjs

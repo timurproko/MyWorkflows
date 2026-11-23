@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { GITHUB_DEFAULT_LABELS, labelUsage, pruneDefaultLabels } from "../scripts/prune-default-labels.mjs";
-import { labelsMain } from "../scripts/repository-labels.mjs";
+import definitions from "./fixtures/bootstrap-labels.json";
+import { GITHUB_DEFAULT_LABELS, labelUsage, pruneDefaultLabels as prune } from "../scripts/prune-default-labels.mjs";
+import { labelsMain as cliMain } from "../scripts/repository-labels.mjs";
 
 const repository = "owner/repository";
+const pruneDefaultLabels = options => prune({ manifest: structuredClone(definitions), ...options });
+const labelsMain = (args, options) => cliMain(args, { manifest: structuredClone(definitions), ...options });
 const defaults = () => GITHUB_DEFAULT_LABELS.map((label, n) => ({ ...label, default: true, id: n + 1 }));
 function fake(labels = defaults(), usage: Record<string, any[]> = {}, fresh: Record<string, any> = {}, laterUsage?: Record<string, any[]>) {
   const callsPerName = new Map<string, number>();
@@ -78,6 +81,21 @@ describe("explicit default-label pruning", () => {
     expect(result.labels).toEqual([]);
     expect(result.preserved).toHaveLength(5);
     expect(api).toHaveBeenCalledTimes(1);
+  });
+
+  it("protects all current/historical managed names, even renamed to unmodified GitHub defaults", async () => {
+    const manifest = structuredClone(definitions);
+    manifest.labels["under-review"].name = "bug";
+    manifest.labels["under-review"].previousNames.push("documentation");
+    manifest.labels["review-approved"].name = "enhancement";
+    manifest.labels["review-changes-needed"].name = "question";
+    const managed = Object.values(manifest.labels).flatMap(label => [label.name, ...label.previousNames]);
+    const labels = [...defaults(), ...managed.filter(name => !defaults().some(label => label.name === name)).map((name, n) => ({ name, color: "840479", description: "", default: false, id: n + 100 }))];
+    const api = fake(labels);
+    const result = await pruneDefaultLabels({ repository, api, manifest, apply: true });
+    expect(result.preserved).toEqual(expect.arrayContaining(managed));
+    expect(result.labels.some(label => managed.includes(label.name))).toBe(false);
+    expect(api.mock.calls.filter(([method]) => method === "DELETE").every(([, route]) => !managed.includes(decodeURIComponent(route.split("/").at(-1)!)))).toBe(true);
   });
 
   it("counts closed-only and paginated issues and pull requests", async () => {

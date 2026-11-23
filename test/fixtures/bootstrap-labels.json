@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "labels": {
+    "under-review": {
+      "name": "🤖 Review", "color": "840479", "description": "",
+      "previousNames": ["🤖 Under review"],
+      "reference": {
+        "id": 13190967182, "nodeId": "LA_kwDOVy9vAc8AAAADEj4vjg",
+        "name": "🤖 Under review", "color": "840479", "description": ""
+      }
+    },
+    "review-approved": {
+      "name": "🤖 Approved", "color": "1a7f37", "description": "", "previousNames": [],
+      "reference": {
+        "id": 13192323713, "nodeId": "LA_kwDOVy9vAc8AAAADElLigQ",
+        "name": "🤖 Approved", "color": "1a7f37", "description": ""
+      }
+    },
+    "review-changes-needed": {
+      "name": "🤖 Rework", "color": "9a6700", "description": "",
+      "previousNames": ["🤖 Changes needed"],
+      "reference": {
+        "id": 13192323855, "nodeId": "LA_kwDOVy9vAc8AAAADElLjDw",
+        "name": "🤖 Changes needed", "color": "9a6700", "description": ""
+      }
+    }
+  }
+}

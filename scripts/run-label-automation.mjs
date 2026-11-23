@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { labelApi, syncLabels, validateRepository } from "./repository-labels.mjs";
 import { cleanupReviewLabel } from "./review-label-cleanup.mjs";
 
-export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log, event } = {}) {
+export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log, event, manifest } = {}) {
   if (environment.GITHUB_ACTIONS !== "true" || !["pull_request_target", "workflow_dispatch", "workflow_run"].includes(environment.GITHUB_EVENT_NAME)) {
     throw new Error("label automation requires a trusted delivery event");
   }
@@ -24,13 +24,20 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   }
   if (operation === "cleanup") {
     event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));
-    const result = await cleanupReviewLabel({ repository, event, api });
-    report(`Under review closed-PR cleanup: ${result.disposition}.`);
+    const result = await cleanupReviewLabel({ repository, event, api, manifest });
+    report(`Review-in-progress closed-PR cleanup: ${result.disposition}.`);
     return result;
   }
-  const result = await syncLabels({ repository, apply: !dryRun, api });
+  const result = await syncLabels({ repository, apply: !dryRun, api, manifest });
   // Names/descriptions from the API are data, not workflow commands or summary markup.
-  report(`Base labels ${dryRun ? "report" : "sync"}: ${result.labels.filter(label => label.action === "create").length} create, ${result.labels.filter(label => label.action === "update").length} update, ${result.preserved.length} unmanaged labels preserved. No labels deleted.`);
+  report(`Base labels ${dryRun ? "report" : "sync"}: ${result.labels.filter(label => label.action === "create").length} create, ${result.labels.filter(label => label.action === "update").length} update, ${result.labels.filter(label => label.action === "rename").length} rename, ${result.preserved.length} unmanaged labels preserved. No labels deleted.`);
+  // JSON escaping plus Markdown/HTML escaping keeps arbitrary UI names inert in logs and summaries.
+  const data = value => JSON.stringify(value).replace(/[<>&`*_[\]#!|]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  for (const label of result.labels.filter(label => label.action === "rename")) {
+    report(`Managed label ${label.key}: ${dryRun ? "planned rename" : "renamed"} ${data(label.previousName)} to ${data(label.name)}.`);
+  }
+  for (const conflict of result.conflicts ?? []) report(`Managed label ${conflict.key}: retained current and previous definitions ${data(conflict)}; no automatic deletion.`);
+  for (const label of result.labels.filter(label => label.action === "reference-drift")) report(`Managed label ${label.key}: reference drift; reconcile UI changes before applying this definition.`);
   return result;
 }
 

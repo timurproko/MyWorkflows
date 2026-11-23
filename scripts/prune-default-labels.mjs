@@ -1,4 +1,4 @@
-import { labelApi, listLabels, validateRepository } from "./repository-labels.mjs";
+import { folded, labelApi, labelNames, listLabels, loadBaseLabels, validateManifest, validateRepository } from "./repository-labels.mjs";
 
 // GitHub's unmodified default metadata is a pruning allowlist, not part of the managed base palette.
 export const GITHUB_DEFAULT_LABELS = Object.freeze([
@@ -38,10 +38,13 @@ export async function labelUsage(repository, name, api = labelApi) {
 }
 
 /** Explicit CLI operation only. Automatic sync never calls this function. */
-export async function pruneDefaultLabels({ repository, apply = false, api = labelApi }) {
+export async function pruneDefaultLabels({ repository, apply = false, api = labelApi, manifest }) {
   validateRepository(repository);
+  manifest = validateManifest(manifest === undefined ? await loadBaseLabels() : manifest);
+  const protectedNames = new Set(Object.values(manifest.labels).flatMap(label => [...labelNames(label), ...(label.reference ? [label.reference.name] : [])]).map(folded));
+  const eligibleDefault = label => !protectedNames.has(folded(label.name)) && unmodified(label);
   const existing = await listLabels(repository, api);
-  const eligible = existing.filter(unmodified);
+  const eligible = existing.filter(eligibleDefault);
   // Read every candidate first: unreadable counts cannot follow an earlier deletion.
   const labels = [];
   for (const label of eligible) {
@@ -64,6 +67,6 @@ export async function pruneDefaultLabels({ repository, apply = false, api = labe
       result.action = "deleted";
     }
   }
-  return { repository, applied: apply, labels, preserved: existing.filter(label => !unmodified(label)).map(label => label.name),
+  return { repository, applied: apply, labels, preserved: existing.filter(label => !eligibleDefault(label)).map(label => label.name),
     warning: "Deleting a label removes all its assignments. A final usage-read/DELETE race remains; authorize pruning separately in a quiet maintenance window." };
 }
