@@ -43,6 +43,8 @@ Status: implemented, with author/title controls and no-comparison/no-update regr
 
 ### 2. Expected update permission refusals warn per pull request without preventing independent branch refreshes
 
+Status: implemented; recognized mutation refusals skip with escaped Actions warnings and summaries. Fake-API and CLI tests cover siblings, multiple/all skips, unknown/rate-limited errors and denied reads.
+
 - Admit expected mutation permission responses to the update interpreter rather than the global credential-abort path; retain enough response metadata to distinguish rate limits from permission refusals.
 - Bound permission-refusal classification to recognized GitHub authorization messages, including the demonstrated missing-workflows-permission error and resource-not-accessible denial. Unknown 403 responses and rate-limit/abuse failures must not become successful skips.
 - Emit a clear GitHub Actions warning and summary entry naming each denied PR and the reason, with safe annotation formatting for API-provided text. Preserve structured per-PR evidence.

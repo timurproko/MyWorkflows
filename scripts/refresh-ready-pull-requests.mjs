@@ -26,6 +26,12 @@ for (const result of results) {
     targetSha: result.targetSha ?? null,
     reason: result.reason ?? null,
   };
+  if (result.permissionDenied) {
+    const message = `Ready pull-request refresh: skipped ${repository}#${result.number}: ${result.reason}`;
+    // API messages are annotation data, not workflow commands or annotation properties.
+    console.log(`::warning::${message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A")}`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `- Warning: ${JSON.stringify(message)}\n`);
+  }
   await report(`Ready pull-request refresh: ${JSON.stringify(evidence)}`);
 }
 const failed = results.filter(result => result.disposition === "failed");
@@ -52,7 +58,14 @@ async function request(path, { method = "GET", body, expected = [200] } = {}) {
     throw error;
   }
   try {
-    return { status: response.status, body: text ? JSON.parse(text) : undefined };
+    return {
+      status: response.status,
+      body: text ? JSON.parse(text) : undefined,
+      headers: {
+        "x-ratelimit-remaining": response.headers.get("x-ratelimit-remaining"),
+        "retry-after": response.headers.get("retry-after"),
+      },
+    };
   } catch {
     throw new Error(`GitHub REST ${method} ${path} returned malformed JSON`);
   }

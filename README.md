@@ -22,7 +22,11 @@ After a merge, the shared job refreshes stale, ready PRs with same-repository he
 using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
 Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
 not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
-Consumers tracking the shared workflow and tooling at `main` receive this policy without caller edits after merge.
+Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
+naming the repository, PR and GitHub reason; independent PRs are still refreshed. Unknown errors, rate limits,
+invalid credentials and denied reads remain failures. The App's permissions are not expanded and no fallback
+token is used. Consumers tracking the shared workflow and tooling at `main` receive this behavior without caller
+edits after merge.
 
 ## Adopting it in a repository
 

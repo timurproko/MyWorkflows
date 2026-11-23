@@ -41,12 +41,20 @@ export function decideRefresh(eligibility, comparison, targetSha) {
 
 /**
  * Interpret GitHub's update-branch response. Accepted updates, expected-head
- * races, already-current heads, and merge conflicts are bounded outcomes;
- * anything else is an operational failure.
+ * races, already-current heads, merge conflicts and recognized permission
+ * refusals are bounded outcomes; unknown errors and rate limits still fail.
  */
 export function interpretBranchUpdate(decision, response) {
   if (response.status === 202) return { ...decision, disposition: "updated" };
   const message = typeof response.body?.message === "string" ? response.body.message : "";
+  // Security: only an explicit mutation permission refusal is a skip, never a blanket 403 bypass.
+  const rateLimited = response.headers?.["x-ratelimit-remaining"] === "0" || response.headers?.["retry-after"] != null;
+  const permissionMessage = message.trim();
+  const permissionRefused = /^resource not accessible by integration\.?$/i.test(permissionMessage)
+    || /^refusing to allow a GitHub App to create or update workflow .+ without [`'"]?workflows[`'"]? permission\.?$/i.test(permissionMessage);
+  if (response.status === 403 && !rateLimited && permissionRefused) {
+    return { ...decision, disposition: "skipped", permissionDenied: true, reason: `update-branch permission refused (HTTP 403): ${message.slice(0, 500)}` };
+  }
   if (response.status === 422) {
     if (/expected head sha/i.test(message)) return { ...decision, disposition: "deferred", reason: "head changed after it was read" };
     if (/no new commits/i.test(message)) return { ...decision, disposition: "current" };
@@ -81,7 +89,7 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
     try {
       results.push(await refreshCandidate(number));
     } catch (error) {
-      // Security: a rejected credential fails every later mutation the same way, so stop instead of retrying it per candidate.
+      // Security: credential/read authorization failures abort. Expected mutation refusals are interpreted locally.
       if (error?.status === 401 || error?.status === 403) throw error;
       results.push({ disposition: "failed", number, headSha: null, reason: String(error?.message ?? error).slice(0, 300) });
     }
@@ -102,7 +110,7 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
 
     // Concurrency: the expected head binds this decision to the exact SHA just compared; GitHub rejects it if the branch moved.
     const response = await request(`${prefix}/pulls/${number}/update-branch`, {
-      method: "PUT", body: { expected_head_sha: decision.headSha }, expected: [202, 422],
+      method: "PUT", body: { expected_head_sha: decision.headSha }, expected: [202, 403, 422],
     });
     return interpretBranchUpdate(decision, response);
   }
