@@ -1,0 +1,75 @@
+# Delivery labels
+
+## Palette, enablement and timing
+
+`labels/base.json` is the only base-label definition. Its version-1 `labels` object is keyed by stable names; the first key is `under-review`. That entry exactly matches herdr-app's original label: `🤖 Under review`, color `840479`, empty description. The emoji is U+1F916 followed by one ordinary space, with no variation selector.
+
+The existing reusable Delivery workflow has two independent, non-required jobs: base-label sync and closed-PR review-label cleanup. They write nothing unless the **calling repository's** Actions variable `DELIVERY_LABELS_ENABLED` is exactly `true`. It is disabled when unset, empty or any other value. This change does not set that variable, modify App permissions, or perform a rollout.
+
+Once the maintainer enables it, the first forwarded delivery event after adoption syncs the palette. A changed central definition reaches each consumer on its next forwarded event, **not immediately while the repository is idle**. Existing callers tracking `main` need no changes; pinned callers need their ordinary tooling update. There is no inventory, central discovery/fan-out workflow, consumer schedule, new dispatch input or protection change.
+
+Sync creates missing managed definitions and updates only their color/description in place. Assignments survive. Defaults and custom labels are preserved, and a definition removed from a later manifest becomes unmanaged, not deleted. A case/Unicode-normalization collision is reported rather than renaming a custom label silently.
+
+The existing manual dispatch with `dry_run: true` reports the palette diff without writes even while rollout is disabled. Normal disabled events report pending maintainer enablement and do not even read label state. Errors appear as warnings and job summaries, independently of promotion, finalization and the Delivery check; a later event retries sync. No label job is a prerequisite of those jobs or a required merge check.
+
+## Identity and permissions
+
+Both automatic writers mint their **own repository-scoped delivery App installation token** with **Pull requests write**, using the existing App id/key secrets. The token action revokes each token after the job. The existing finalization publisher and its token remain unchanged.
+
+GitHub's label endpoints accept either Issues write **or** Pull requests write for App installation tokens. This applies to creating/updating repository labels and adding/removing PR labels, despite the `/issues/` endpoint namespace. Therefore the delivery App's existing Pull requests write grant suffices: **no added Issues permission or permission-acceptance step is required**. See the [GitHub labels API permission documentation](https://docs.github.com/en/rest/issues/labels#create-a-label).
+
+The current caller `GITHUB_TOKEN` has Pull requests read and cannot do these writes. It is used only for an explicitly requested read-only manual diff; it is never a write fallback. Missing App secrets, a misconfigured installation, forbidden access or rate limits are visible errors. The owner fixes the missing existing delivery capability or keeps rollout disabled; the tool does not request a broader PAT or change permissions itself.
+
+Local diagnostics/manual application use the ordinary signed-in `gh` credential (or its normal `GH_TOKEN` override), not an exported App key. Fine-grained credentials need access to the target repository and the corresponding label read/write permission. Private repositories require actual private-repository access. Pruning additionally needs visibility of both issues and PRs so historical usage is not missed; inaccessible usage fails closed.
+
+## Local report/apply and optional pruning
+
+The `delivery labels` command requires `--repo owner/name` explicitly and emits JSON:
+
+| Flags after `delivery labels --repo owner/name` | Behavior |
+| --- | --- |
+| None | Read-only base-label diff and preserved unmanaged names |
+| `--apply` | Explicitly create/update the managed definitions, with the signed-in credential |
+| `--prune-unused-defaults` | Read-only default-label usage report; does not sync the palette |
+| `--apply --prune-unused-defaults` | Explicitly prune eligible defaults instead of syncing the palette |
+
+The apply flag is a manual write authorization, not part of automatic rollout. A maintainer must authorize it separately for the named repository; approving implementation does not authorize it. No apply/prune command is run by this change, and automatic jobs never import or invoke the pruner.
+
+Pruning recognizes only the ten known GitHub defaults (`accessibility`, `bug`, `documentation`, `duplicate`, `enhancement`, `good first issue`, `help wanted`, `invalid`, `question`, `wontfix`) with their original metadata and GitHub default marker. A custom label with the same name, a changed description/color, or an unreadable usage count is not permission to delete it. Missing defaults are not recreated.
+
+The command paginates all-state issue/PR usage, including closed and merged work. It reads every candidate before deleting any, then freshly checks each candidate's identity, metadata, default marker and usage before deletion. Used labels are retained. A 404 for a definition removed since the report is skipped; permission failures are not disguised as absence. Failed deletions are not blindly retried.
+
+**Deleting a label deletes its assignments everywhere.** GitHub has no atomic delete-if-unused operation, so a usage change between the final read and DELETE remains possible. Obtain separate consent for the repository, inspect a fresh report, and use a quiet maintenance window. Keeping all defaults is the only zero-deletion-risk policy and remains the automatic behavior.
+
+The [approved plan's historical audit](plans/base-labels.md#5-defaults-preserve-automatically-prune-only-on-explicit-request) found 51 unused candidates, but authorized none. In particular, a1's used `bug` and `enhancement` classifications must remain. That snapshot is not a substitute for a fresh report.
+
+## Direct review-runner contract (crew integration is separate)
+
+A review runner owns the normal lifetime of the `under-review` manifest entry. The label is **advisory**, not an approval, required check, readiness condition or merge gate. The person may merge while it is present. Its absence does not establish that review happened or passed.
+
+After the maintainer enables labels and the base definition is available, whoever starts an agent review uses their signed-in GitHub credential to add/remove only `🤖 Under review`. Ordinary PR-label editing with `gh` or `gh-axi` is sufficient. The exact API is:
+
+| Action | Request |
+| --- | --- |
+| Add | `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Under review"]}` |
+| Remove | `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/%F0%9F%A4%96%20Under%20review` |
+
+Do not replace the whole label set or delete the repository definition. Repeated add is harmless; repeated remove succeeds when absence is confirmed. A 404 can also mean an inaccessible PR/repository, so check access/absence rather than treating every 404 as successful cleanup. Surface permission/network failures and retry through existing recovery; no dispatch, App key or review-specific API is needed.
+
+The separate crew task must:
+
+- Resolve the implementation PR from its worker's implementation report/current branch, not mistake a `Plan:` report for a final review target.
+- Add the label when `crew review` starts, before launching the reviewer, including on a draft or pending-CI PR. Report add failure honestly and remove on launch failure.
+- Remove on either report verdict (`APPROVE` or `CHANGES NEEDED`), malformed/failed reports, stop, finish, observed death and abandonment, using crew's existing Core/task lifecycle and recovery observations.
+- Complete old cleanup before starting a replacement. Keep one owner per PR, or retain the label until that owner's last local reviewer ends. A plain label cannot coordinate overlapping independent controllers.
+- Add fake-Core/GitHub tests for verdicts, launch/terminal failure, stop/finish/death, repeated operations and denied access. No live labels are necessary for those tests.
+
+No crew source is modified in this repository. There are no leases, heartbeats, state comments, timers, supervisor processes or consumer sweeps. If an entire runner machine disappears, an open PR can retain its label until crew recovers or a person removes it. No time-based crash-expiry guarantee is made.
+
+## Closed-event final fallback
+
+On the **already forwarded** `pull_request_target: closed` event, `review-label-cleanup` removes the exact Under review assignment for either a merged or unmerged closure. It applies to any PR author/target branch, not only the default branch. It validates the event's repository and PR identity, checks current closure state, paginates assignments, then rechecks the PR before removal so a queued closure does not intentionally clear a newly reopened review. It preserves all other assignments and the definition. Missing assignment is an idempotent no-op; a DELETE 404 is successful only after confirming PR access and label absence.
+
+The job is default-disabled with sync, has its own App token, has no dependency into promotion/finalization, and uses job-level failure isolation with explicit warnings. Normal successfully processed closures therefore cannot keep a stale Under review label even if crew never reported. Disabled rollout, failed API calls or lost event delivery can still prevent cleanup; they are not hidden by a claim of absolute availability. A last-read/reopen race cannot be made atomic with the label API.
+
+This does not scan historical PRs. Herdr-app #14 was already merged with the label before this feature; its old event is not replayed. A person may separately authorize direct removal of that old assignment after rollout. Nothing in this change clears it or reopens a PR.

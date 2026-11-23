@@ -141,6 +141,26 @@ when every outcome is ticked and the body is valid, and there is nothing to fina
 - Hand off after pushing a plan, after CI is green, and after any repair push: worktree path, branch, commit,
   change, PR, behaviour, known gaps, and one command the maintainer can run. Say when nothing is runnable.
 
+### Final agent review labels
+
+Where the maintainer has enabled delivery labels and synced the base palette, whoever runs the agent review
+owns the `under-review` entry in the shared `labels/base.json` (GitHub name `🤖 Under review`). If rollout is
+not enabled, do not create or change labels. Use the review runner's signed-in credential, not the delivery App
+private key, and plain PR add-label/remove-label operations; no lease, heartbeat or dispatch protocol exists.
+
+- Add the label when the review starts, before launching the reviewer, even if the PR is draft or CI is pending.
+- Remove it on either verdict, `APPROVE` or `CHANGES NEEDED`, and on failed launch/report, stop, finish, observed
+  death or abandonment. Make retries idempotent, preserve all other labels and report permission/API failures.
+  Confirm access and absence before treating a remove-label 404 as success.
+- Complete old cleanup before replacing a reviewer. Use one owner per PR, or retain the label until that owner's
+  last local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
+- The label is advisory: never make it a required check or merge gate, and never interpret absence as approval.
+  The shared workflow clears it on successfully processed closed/merged PR events after enablement. It does not
+  observe crew reports, guarantee timed crash expiry, or sweep historical PRs. A lost runner leaves an open PR
+  labeled until existing recovery or a person clears it. Crew hooks are a separate integration task.
+- Rollout enablement and optional default-label pruning are separate maintainer decisions. Implementation
+  approval does not authorize setting variables, applying permissions, pruning or other live label writes.
+
 ## 6. Merge
 
 The maintainer merges, or arms auto-merge. An agent merges only when the maintainer explicitly asks, in the
