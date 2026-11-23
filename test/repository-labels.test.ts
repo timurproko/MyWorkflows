@@ -135,6 +135,20 @@ describe("default-disabled label automation", () => {
     expect(api).not.toHaveBeenCalled();
   });
 
+  it("grants the sync job read permissions for private-repository dry runs without an App token", async () => {
+    const workflow = await readFile(".github/workflows/delivery.yml", "utf8");
+    // Scope to this job: caller grants and sibling jobs do not become the reusable job's permissions.
+    const sync = workflow.slice(workflow.indexOf("\n  label-sync:"), workflow.indexOf("\n  review-label-cleanup:"));
+    const permissions = sync.match(/\n    permissions:\n((?:      [^\n]*\n)+)/)?.[1];
+    expect(permissions).toBe("      contents: read\n      pull-requests: read\n");
+    expect(sync).toContain("!(github.event_name == 'workflow_dispatch' && inputs.dry_run)");
+    expect(sync).toContain("GH_TOKEN: ${{ steps.labels-app.outputs.token || github.token }}");
+    for (const path of ["templates/delivery-caller.yml", ".github/workflows/self-delivery.yml"]) {
+      const caller = await readFile(path, "utf8");
+      expect(caller).toMatch(/\npermissions:\n  contents: write\n  pull-requests: read\n/);
+    }
+  });
+
   it("keeps the reusable sync job isolated, pinned, gated and free of new caller contracts", async () => {
     const workflow = await readFile(".github/workflows/delivery.yml", "utf8");
     const sync = workflow.slice(workflow.indexOf("\n  label-sync:"));
