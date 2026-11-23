@@ -5,6 +5,16 @@
       "name": "🤖 Under review",
       "color": "840479",
       "description": ""
+    },
+    "review-approved": {
+      "name": "🤖 Approved",
+      "color": "1a7f37",
+      "description": ""
+    },
+    "review-changes-needed": {
+      "name": "🤖 Changes needed",
+      "color": "9a6700",
+      "description": ""
     }
   }
 }

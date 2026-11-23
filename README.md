@@ -35,8 +35,17 @@ optional override described below.
 
 ## Base labels and agent review
 
-`labels/base.json` centrally defines the base palette, starting with `🤖 Under review`.
-The existing Delivery workflow syncs definitions and removes that PR assignment on close/merge; both jobs
+`labels/base.json` centrally defines three robot labels, each with an empty description:
+
+| Key | Name | Color |
+| --- | --- | --- |
+| `under-review` | 🤖 Under review | `840479` |
+| `review-approved` | 🤖 Approved | `1a7f37` |
+| `review-changes-needed` | 🤖 Changes needed | `9a6700` |
+
+Names start with U+1F916 and one ordinary space, without a variation selector.
+The existing Delivery workflow syncs all three definitions and removes ONLY Under review on close/merge;
+Approved and Changes needed survive closure as a review record. Both jobs
 are **enabled by default**, with no per-repository setup. The consumer's Actions variable
 `DELIVERY_LABELS_ENABLED=false` opts out of both automatic writers (case-insensitive, without whitespace
 trimming). Unset, empty, `true` and any other value remain enabled. No variable is set automatically.
@@ -47,8 +56,13 @@ reference and matching `tools_ref` to a revision containing this policy. Default
 deleted automatically. Manual dry runs stay read-only even when opted out. Optional pruning of unused,
 unmodified GitHub defaults requires a separate explicit command and consent.
 
-The agent-review runner adds/removes Under review directly with its signed-in credential; crew integration is a
-separate task. The label is advisory, never a merge gate. Existing App Pull requests write permission suffices;
+At review start, the agent-review runner adds Under review and removes any previous verdict label before
+launching the reviewer. On `APPROVE`, it removes Under review and adds Approved; on `CHANGES NEEDED`, it removes
+Under review and adds Changes needed. Verdicts are mutually exclusive. Failed launch/report, stop, finish,
+observed death or abandonment clear Under review without inventing a verdict. Unrelated labels are preserved.
+The runner uses its signed-in credential; crew integration is a separate task in crew PR #7, not implemented here.
+All three labels are advisory, never a merge gate; absence is not approval, and a retained verdict is not a
+promise that later commits were reviewed. Existing App Pull requests write permission suffices;
 no added Issues grant or caller permission change is needed. Label jobs are isolated from promotion,
 finalization and required checks; missing App rights produce visible warnings, not delivery failures.
 See [opt-out, version pins, permissions and the exact review contract](docs/delivery-labels.md).
