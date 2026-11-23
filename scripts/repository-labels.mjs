@@ -7,6 +7,18 @@ export const folded = name => name.normalize("NFC").toLowerCase();
 export const REFERENCE_REPOSITORY = "timurproko/MyWorkflows";
 export const labelNames = label => [label.name, ...(label.previousNames ?? [])];
 export const labelMetadata = label => ({ name: label.name, color: label.color, description: label.description ?? "" });
+const sameMetadata = (a, b) => a?.name === b.name && a.color?.toLowerCase() === b.color.toLowerCase() && (a.description ?? "") === b.description;
+
+async function referencePublicationPending(repository, api) {
+  for (let page = 1; page <= 1000; page++) {
+    const pulls = await api("GET", `repos/${repository}/pulls?state=open&per_page=100&page=${page}`);
+    if (!Array.isArray(pulls) || pulls.length > 100) throw new Error("invalid reference pull-request listing");
+    if (pulls.some(pull => pull.head?.repo?.full_name?.toLowerCase() === REFERENCE_REPOSITORY.toLowerCase()
+      && pull.head?.ref?.startsWith("chore/reference-labels-"))) return true;
+    if (pulls.length < 100) return false;
+  }
+  throw new Error("reference pull-request pagination limit exceeded");
+}
 const text = (value, max) => typeof value === "string" && [...value].length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
 
 export function validateRepository(repository) {
@@ -93,6 +105,8 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
   const existing = await listLabels(repository, api);
   const managed = new Set(Object.values(manifest.labels).map(label => folded(label.name)));
   const conflicts = [];
+  const referenceRepository = repository.toLowerCase() === REFERENCE_REPOSITORY.toLowerCase();
+  const referencePending = referenceRepository && await referencePublicationPending(repository, api);
   // Compare every current/legacy name before the first write. Never guess through collisions.
   const labels = Object.entries(manifest.labels).map(([key, wanted]) => {
     const matches = labelNames(wanted).map(name => {
@@ -100,7 +114,21 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
       if (found && found.name !== name) throw new Error("managed label name collides with a differently cased or normalized name");
       return found;
     });
-    const [current, ...old] = matches;
+    let [current, ...old] = matches;
+    if (referenceRepository) {
+      if (!wanted.reference) throw new Error("reference sync requires recorded label identities");
+      const source = existing.find(label => label.id === wanted.reference.id);
+      if (!source || source.node_id !== wanted.reference.nodeId || (current && current.id !== source.id)
+        || (!sameMetadata(source, wanted) && (referencePending || !sameMetadata(source, wanted.reference)))) {
+        return { key, name: wanted.name, action: "reference-drift" };
+      }
+      if (sameMetadata(source, wanted)) return { key, name: wanted.name, action: "unchanged" };
+      if (source.name !== wanted.name) {
+        managed.add(folded(source.name));
+        return { key, name: wanted.name, action: "rename", previousName: source.name };
+      }
+      return { key, name: wanted.name, action: "update" };
+    }
     const legacy = old.filter(Boolean);
     if (current && legacy.length) conflicts.push({ key, kept: current.name, preserved: legacy.map(label => label.name) });
     if (!current && legacy.length > 1) throw new Error("multiple previous managed label names exist; rename is ambiguous");
@@ -113,6 +141,15 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
   if (apply) {
     for (const label of labels) {
       const wanted = manifest.labels[label.key];
+      if (referenceRepository && ["update", "rename"].includes(label.action)) {
+        // Narrow the UI-edit/PATCH race. GitHub offers no atomic conditional label update.
+        const source = await api("GET", `repos/${repository}/labels/${encodeURIComponent(label.previousName ?? label.name)}`);
+        if (source?.id !== wanted.reference.id || source.node_id !== wanted.reference.nodeId || !sameMetadata(source, wanted.reference)
+          || await referencePublicationPending(repository, api)) {
+          label.action = "reference-drift";
+          continue;
+        }
+      }
       if (label.action === "create") await api("POST", `repos/${repository}/labels`, labelMetadata(wanted));
       if (["update", "rename"].includes(label.action)) await api("PATCH",
         `repos/${repository}/labels/${encodeURIComponent(label.previousName ?? label.name)}`,
