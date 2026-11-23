@@ -82,6 +82,8 @@ Status: implemented; source-identity, bootstrap, UI drift, pending-PR and last-r
 
 ### 4. Closed-PR cleanup resolves current and historical review names by key and preserves all verdict assignments
 
+Status: implemented; current/historical review and verdict cleanup regressions pass.
+
 - Resolve only `under-review` current name plus `previousNames` from the manifest, and remove matching assignments on merged and unmerged closed PRs, including both names present together. Do not hard-code any runtime display name or enumerate the whole palette for removal.
 - Preserve current and historical verdict assignments under `review-approved` and `review-changes-needed`, plus unrelated labels. Never add a verdict or delete a label definition. Maintain repository/event/current-state validation, pagination, reopen checks before each removal, idempotency and confirmed-access/absence handling for DELETE 404s.
 - Change runner messages and workflow step names to key/role-based wording so future UI renames do not stale logs. Cover arbitrary future names without a robot prefix, multiple historical review aliases, all current/historical verdicts together, reopen between removals and default-on/opt-out/dry-run/token safeguards.

@@ -1,4 +1,4 @@
-import { labelApi, loadBaseLabels, validateManifest, validateRepository } from "./repository-labels.mjs";
+import { labelApi, labelNames, loadBaseLabels, validateManifest, validateRepository } from "./repository-labels.mjs";
 
 /** Event-only final fallback. Normal review lifetime is owned by the signed-in review runner. */
 export async function cleanupReviewLabel({ repository, event, api = labelApi, manifest }) {
@@ -10,7 +10,7 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     throw new Error("review-label cleanup requires a matching closed pull-request event");
   }
   manifest = validateManifest(manifest === undefined ? await loadBaseLabels() : manifest);
-  const name = manifest.labels["under-review"].name;
+  const names = labelNames(manifest.labels["under-review"]);
   const prefix = `repos/${repository}`;
   async function currentState() {
     const pull = await api("GET", `${prefix}/pulls/${number}`);
@@ -19,7 +19,7 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     }
     return pull.state;
   }
-  async function hasLabel() {
+  async function hasLabel(name) {
     for (let page = 1; page <= 1000; page++) {
       const labels = await api("GET", `${prefix}/issues/${number}/labels?per_page=100&page=${page}`);
       if (!Array.isArray(labels) || labels.length > 100 || labels.some(label => typeof label?.name !== "string")) {
@@ -31,17 +31,21 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     throw new Error("pull-request label pagination limit exceeded");
   }
   if (await currentState() === "open") return { number, disposition: "reopened" };
-  if (!await hasLabel()) return { number, disposition: "absent" };
-  // A queued close event must not intentionally clear a review started after reopening.
-  if (await currentState() === "open") return { number, disposition: "reopened" };
-  try {
-    await api("DELETE", `${prefix}/issues/${number}/labels/${encodeURIComponent(name)}`);
-  } catch (error) {
-    if (error.status !== 404) throw error;
-    // A 404 may mean an inaccessible PR, not absence. Confirm both access and absence before succeeding.
-    await currentState();
-    if (await hasLabel()) throw error;
-    return { number, disposition: "absent" };
+  let removed = false;
+  for (const name of names) {
+    if (!await hasLabel(name)) continue;
+    // Recheck before EACH alias removal; a closure can be followed by a new review after reopening.
+    if (await currentState() === "open") return { number, disposition: "reopened" };
+    try {
+      await api("DELETE", `${prefix}/issues/${number}/labels/${encodeURIComponent(name)}`);
+      removed = true;
+    } catch (error) {
+      if (error.status !== 404) throw error;
+      // A 404 may mean an inaccessible PR. Confirm access and this exact assignment's absence.
+      const state = await currentState();
+      if (await hasLabel(name)) throw error;
+      if (state === "open") return { number, disposition: "reopened" };
+    }
   }
-  return { number, disposition: "removed" };
+  return { number, disposition: removed ? "removed" : "absent" };
 }
