@@ -86,6 +86,10 @@ All three labels are advisory; absence is not approval, and a retained verdict d
 The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
+Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
+PR label assignments do not restart shared delivery; callers should also omit `labeled`/`unlabeled` from test
+triggers. The exact crew/herdr-app CI follow-ups and queue limits are in
+[the scheduling guidance](docs/delivery-labels.md#scheduling-and-assignment-only-events).
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command

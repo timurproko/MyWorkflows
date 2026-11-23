@@ -93,6 +93,45 @@ Renaming preserves the GitHub label id and existing issue/PR assignments. If old
 
 Callers tracking `main` need no edit. Version-pinned callers must update the workflow reference and matching `tools_ref` to the same reviewed revision; `tools_ref` defaults to `main`. A workflow pin alone does not pin scripts: pin tooling to the same old revision until upgrading both together. A previous read-only snapshot found a1, crew, herdr-app, xrbuild and its private workspace tracking main with default tooling; MyWorkflows calls its local workflow. None of these six consumers needs an update for a moving-main rollout; this is not a maintained inventory.
 
+## Scheduling and assignment-only events
+
+The isolated, advisory `label-sync` job serializes definition synchronization in the repository-wide
+`delivery-label-sync` group, with `cancel-in-progress: false` and `queue: max`. False alone protects running jobs
+but GitHub's default single pending slot still cancels an older waiting job when a third request arrives.
+The multi-pending queue prevents that misleading cancelled PR check during normal bursts while preserving
+serialization. GitHub allows up to 100 pending jobs; overflow, explicit/manual cancellation and caller-level
+whole-run cancellation remain limits. This is not a guarantee against every possible cancellation.
+See [GitHub's concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+Review-label **assignments** do not change source, implementation bodies, readiness or label definitions.
+`pull_request`/`pull_request_target` actions `labeled` and `unlabeled` should not restart delivery or tests.
+The delivery caller template and this repository's self-caller omit those actions. Shared finalization,
+Delivery check and label-sync also skip them if a nonstandard caller forwards them; closed-event cleanup and
+post-merge refresh keep their existing event guards. The separate reference workflow still receives repository
+`label: [edited, created, deleted]` events, which concern definition changes rather than PR assignments.
+
+A read-only audit found the label-triggered CI restart in both **timurproko/herdr-app/.github/workflows/tests.yml**
+and **timurproko/crew/.github/workflows/tests.yml**. The exact proposed follow-up in each consumer is to change:
+
+```yaml
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+```
+
+Remove only `labeled` and `unlabeled` from their existing lists; keep push/manual triggers, job readiness and
+per-PR code-change supersession unchanged. Their inspected readiness and required-gate jobs do not depend on
+labels. A job-level skip is too late: workflow-level concurrency can already cancel the previous CI run.
+Neither consumer is edited by this shared change. There is no consumer test-workflow template here that could
+update those files centrally; `templates/delivery-caller.yml` controls delivery only. Consumers using labels as
+real test inputs must assess that policy separately; advisory review labels are not test inputs here.
+
+This repository's test workflow uses GitHub's default PR actions (opened, synchronize, reopened), excluding
+labels; the inspected a1 development-validation and xrbuild workspace CI triggers already omit them as well.
+Moving-main callers receive the shared queue/guards after merge, but fixing the two consumer test subscriptions
+requires the separate edits above. Historical cancelled checks are not rewritten or rerun by this change.
+
 ## Runner manifest API and crew contract
 
 At each review operation, read and validate one manifest snapshot from the configured source repository (default `timurproko/MyWorkflows`). Discover `default_branch` with `GET /repos/{source}`, then fetch `GET /repos/{source}/contents/labels/base.json?ref=<URL-encoded-default-branch>` with `Accept: application/vnd.github.raw+json`. **Equivalent one-read form:** `GET /repos/{source}/contents/labels/base.json` without `ref`. Omitting `ref` resolves the default branch on GitHub. Do not assume `main` or use a stale pinned copy.
