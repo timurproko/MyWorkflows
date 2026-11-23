@@ -182,3 +182,43 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/reconcile-merged-branch.mjs
+
+  label-sync:
+    name: Sync the base labels
+    # Advisory and default-disabled; never a prerequisite of promotion, finalization or the delivery check.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: delivery-label-sync
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted delivery tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: timurproko/MyWorkflows
+          ref: ${{ inputs.tools_ref }}
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Mint a separate label App token only after enablement
+        id: labels-app
+        if: vars.DELIVERY_LABELS_ENABLED == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          permission-pull-requests: write
+
+      - name: Reconcile definitions or report disabled rollout
+        env:
+          GH_TOKEN: ${{ steps.labels-app.outputs.token || github.token }}
+          LABELS_APP_TOKEN: ${{ steps.labels-app.outputs.token }}
+          DELIVERY_LABELS_ENABLED: ${{ vars.DELIVERY_LABELS_ENABLED }}
+          LABELS_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: node scripts/run-label-automation.mjs

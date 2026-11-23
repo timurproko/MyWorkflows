@@ -27,6 +27,7 @@ const USAGE = `Usage: delivery <command>
   protect [--repo <owner/name>] [--apply]   Compare defaults or the repository's .github/protection.json;
                                             --apply installs missing protection. Changing existing rules
                                             also requires --allow-rule-changes
+  labels --repo <owner/name> [--apply]      Report the central base-label diff; --apply explicitly upserts it
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
                                             --apply writes AGENTS.md and CLAUDE.md
   openspec <arguments>                      Run OpenSpec at the version the shared workflow pins, for example
@@ -104,6 +105,9 @@ try {
     const result = await protectRepository({ repository, apply: Boolean(values.apply), allowRuleChanges: Boolean(values["allow-rule-changes"]) });
     console.log(formatProtection(result));
     if (result.blocked) process.exitCode = 1;
+  } else if (command === "labels") {
+    const { labelsMain } = await import("../scripts/repository-labels.mjs");
+    console.log(JSON.stringify(await labelsMain(args), null, 2));
   } else if (command === "instructions") {
     const { values } = parseArgs({ args, options: { apply: { type: "boolean" } } });
     const { inspectCheckout, LEFT_FOR_REVIEW } = await import("../scripts/repository-instructions.mjs");

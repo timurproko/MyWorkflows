@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "labels": {
+    "under-review": {
+      "name": "🤖 Under review",
+      "color": "840479",
+      "description": ""
+    }
+  }
+}
