@@ -28,6 +28,8 @@ const USAGE = `Usage: delivery <command>
                                             --apply installs missing protection. Changing existing rules
                                             also requires --allow-rule-changes
   labels --repo <owner/name> [--apply]      Report the central base-label diff; --apply explicitly upserts it
+                                            --prune-unused-defaults reports only unused, unmodified GitHub
+                                            defaults; with --apply deletes them instead of syncing labels
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
                                             --apply writes AGENTS.md and CLAUDE.md
   openspec <arguments>                      Run OpenSpec at the version the shared workflow pins, for example

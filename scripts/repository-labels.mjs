@@ -94,6 +94,10 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
 }
 
 export async function labelsMain(args, { api = labelApi } = {}) {
-  const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" } } });
+  const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" }, "prune-unused-defaults": { type: "boolean" } } });
+  if (values["prune-unused-defaults"]) {
+    const { pruneDefaultLabels } = await import("./prune-default-labels.mjs");
+    return pruneDefaultLabels({ repository: values.repo, apply: Boolean(values.apply), api });
+  }
   return syncLabels({ repository: values.repo, apply: Boolean(values.apply), api });
 }
