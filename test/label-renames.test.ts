@@ -61,7 +61,7 @@ describe("assignment-preserving alias migration", () => {
   it.each([
     (value: any) => value.labels["under-review"].previousNames = "old",
     (value: any) => value.labels["under-review"].previousNames.push("🤖 Approved"),
-    (value: any) => value.labels["under-review"].previousNames.push("🤖 under review"),
+    (value: any) => value.labels["under-review"].previousNames.push("🤖 Review"),
     (value: any) => value.labels["under-review"].previousNames.push(""),
     (value: any) => value.labels["under-review"].reference.id = -1,
     (value: any) => value.labels["under-review"].reference.nodeId = "bad\nnode",
@@ -70,6 +70,14 @@ describe("assignment-preserving alias migration", () => {
   ])("rejects malformed or ambiguous history/identity", mutate => {
     const value = manifest(); mutate(value);
     expect(() => validateManifest(value)).toThrow("invalid base-label manifest");
+  });
+
+  it.each([["Reading", "READING"], ["Café", "Cafe\u0301"]])("renames explicit case/Unicode-only aliases in place: %s", async (current, previous) => {
+    const value: any = { version: 1, labels: { "under-review": { name: current, previousNames: [previous], color: "840479", description: "" } } };
+    const { api, labels } = fake([{ name: previous, color: "840479", description: "", id: 7 }]);
+    expect((await syncLabels({ repository, api, manifest: value, apply: true })).labels[0].action).toBe("rename");
+    expect(labels[0]).toMatchObject({ id: 7, name: current });
+    expect((await syncLabels({ repository, api, manifest: value, apply: true })).labels[0].action).toBe("unchanged");
   });
 
   it("accepts legacy manifests and arbitrary names without robot prefixes", () => {

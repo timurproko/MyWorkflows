@@ -71,6 +71,13 @@ describe("reference identity reconciliation", () => {
     expect(next.labels["under-review"].name).toBe("🤖 Under review");
     expect(next.labels["under-review"].previousNames).toEqual(["🤖 Review", "Intermediate", "Missed intermediate"]);
   });
+  it("honours an explicit UI reversion to the original bootstrap name and preserves case-only aliases", () => {
+    const live = source();
+    expect(reconcileReferenceManifest({ manifest: manifest(), live, event: event(live) }).manifest.labels["under-review"].name).toBe("🤖 Under review");
+    live[0].name = "🤖 REVIEW";
+    const next = reconcileReferenceManifest({ manifest: manifest(), live, event: event(live) }).manifest;
+    expect(next.labels["under-review"].previousNames).toContain("🤖 Review");
+  });
   it("ignores unmanaged/created labels and never adopts a recreated name with another id", () => {
     const live = source();
     for (const action of ["created", "edited", "deleted"]) {

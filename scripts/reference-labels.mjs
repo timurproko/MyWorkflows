@@ -2,7 +2,7 @@ import { appendFile, readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
-import { folded, labelApi, labelMetadata, listLabels, REFERENCE_REPOSITORY, validateManifest } from "./repository-labels.mjs";
+import { labelApi, labelMetadata, listLabels, REFERENCE_REPOSITORY, validateManifest } from "./repository-labels.mjs";
 
 const prefix = `repos/${REFERENCE_REPOSITORY}`;
 const path = "labels/base.json";
@@ -50,15 +50,15 @@ export function reconcileReferenceManifest({ manifest, pendingManifest, live, ev
       throw new Error("pending reference identity changed; manual review required");
     }
     // Keep an intentional bootstrap request until normal sync applies it, provided the UI has not drifted.
-    const desired = same(source, label.reference) && !same(label, label.reference) ? labelMetadata(label) : labelMetadata(source);
+    const desired = matched?.[0] !== key && same(source, label.reference) && !same(label, label.reference) ? labelMetadata(label) : labelMetadata(source);
     const history = [...(label.previousNames ?? []), ...(pending?.previousNames ?? []), label.name,
       ...(pending ? [pending.name] : []), ...(matched?.[0] === key && event.changes?.name ? [event.changes.name.from] : [])];
-    const seen = new Set([folded(desired.name)]);
+    const seen = new Set([desired.name]);
     const previousNames = history.filter(name => {
       // Validate before folding, including history supplied by stale events.
       validateManifest({ version: 1, labels: { "under-review": { name, color: label.color, description: "" } } });
-      if (seen.has(folded(name))) return false;
-      seen.add(folded(name)); return true;
+      if (seen.has(name)) return false;
+      seen.add(name); return true;
     });
     next.labels[key] = { ...desired, previousNames, reference: { id: source.id, nodeId: source.node_id, ...labelMetadata(source) } };
   }

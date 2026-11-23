@@ -36,7 +36,7 @@ export function validateManifest(manifest) {
   if (!manifest || manifest.version !== 1 || Object.keys(manifest).some(key => !["version", "labels"].includes(key))
     || !manifest.labels || Array.isArray(manifest.labels) || typeof manifest.labels !== "object"
     || !Object.hasOwn(manifest.labels, "under-review")) invalid();
-  const names = new Set(), ids = new Set(), nodes = new Set();
+  const names = new Map(), ids = new Set(), nodes = new Set();
   const validName = name => text(name, 50) && name.trim() && name === name.trim();
   const validMetadata = label => validName(label.name) && typeof label.color === "string"
     && /^[0-9a-fA-F]{6}$/.test(label.color) && text(label.description, 100);
@@ -44,9 +44,11 @@ export function validateManifest(manifest) {
     if (!/^[a-z][a-z0-9-]*$/.test(key) || !label || typeof label !== "object" || Array.isArray(label)
       || Object.keys(label).some(field => !["color", "description", "name", "previousNames", "reference"].includes(field))
       || !validMetadata(label) || (label.previousNames !== undefined && !Array.isArray(label.previousNames))) invalid();
+    const exact = new Set();
     for (const name of labelNames(label)) {
-      if (!validName(name) || names.has(folded(name))) invalid();
-      names.add(folded(name));
+      if (!validName(name) || exact.has(name) || (names.has(folded(name)) && names.get(folded(name)) !== key)) invalid();
+      // Explicit same-role aliases permit deliberate case/Unicode-only renames; never cross roles.
+      exact.add(name); names.set(folded(name), key);
     }
     if (label.reference !== undefined) {
       const ref = label.reference;
@@ -111,7 +113,10 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
   const labels = Object.entries(manifest.labels).map(([key, wanted]) => {
     const matches = labelNames(wanted).map(name => {
       const found = existing.find(label => folded(label.name) === folded(name));
-      if (found && found.name !== name) throw new Error("managed label name collides with a differently cased or normalized name");
+      if (found && found.name !== name) {
+        if (labelNames(wanted).includes(found.name)) return undefined;
+        throw new Error("managed label name collides with a differently cased or normalized name");
+      }
       return found;
     });
     let [current, ...old] = matches;
