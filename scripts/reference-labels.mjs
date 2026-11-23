@@ -127,7 +127,7 @@ export async function reconcileReference({ api = labelApi, apply = false, event,
   if (pull) {
     const files = await pages(api, `pulls/${pull.number}/files`);
     const commits = await pages(api, `pulls/${pull.number}/commits`);
-    if (pull.title !== title || !files.length || files.some(file => file.filename !== path || file.previous_filename)
+    if (pull.title !== title || files.some(file => file.filename !== path || file.previous_filename)
       || !await trustedPendingCommits(api, commits, baseHead)) {
       throw new Error("reference branch contains manual or unrelated edits; refusing to overwrite");
     }
@@ -138,10 +138,19 @@ export async function reconcileReference({ api = labelApi, apply = false, event,
   const content = `${JSON.stringify(result.manifest, null, 2)}\n`;
   const baseline = pendingManifest ?? manifest;
   const changed = JSON.stringify(result.manifest) !== JSON.stringify(baseline);
-  if (!apply || !changed) return { ...result, disposition: changed ? "would-publish" : "unchanged", applied: false, pr: pull?.html_url };
+  const retire = pull && JSON.stringify(result.manifest) === JSON.stringify(manifest);
+  if (!apply || (!changed && !retire)) return { ...result,
+    disposition: retire ? "would-retire" : changed ? "would-publish" : "unchanged", applied: false, pr: pull?.html_url };
   // All preflight reads finish before writes. Optimistic ref updates reject sibling concurrent commits.
   if (signature(live) !== signature(await listLabels(REFERENCE_REPOSITORY, api))) throw new Error("reference labels changed during reconciliation; retry");
   if (await headAt(api, base) !== baseHead || (pull && await headAt(api, branch) !== head)) throw new Error("reference branch changed during reconciliation; retry");
+  if (retire) {
+    await api("POST", `${prefix}/issues/${pull.number}/comments`, {
+      body: "The reference labels now match the accepted manifest on the default branch. Closing this no-op reconciliation pull request; a later reference edit will open a fresh one.",
+    });
+    await api("PATCH", `${prefix}/pulls/${pull.number}`, { state: "closed" });
+    return { ...result, disposition: "retired", applied: true, pr: pull.html_url };
+  }
   const commit = await api("GET", `${prefix}/git/commits/${head}`);
   if (!/^[a-f0-9]{40}$/.test(commit?.tree?.sha ?? "")) throw new Error("invalid reference commit tree");
   const tree = await api("POST", `${prefix}/git/trees`, { base_tree: commit.tree.sha,

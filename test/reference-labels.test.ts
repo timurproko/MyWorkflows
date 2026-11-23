@@ -17,19 +17,26 @@ function fake() {
   const refs: Record<string, string> = { trunk: main };
   const manifests: Record<string, any> = { [main]: manifest() };
   const live = source(); live[0].name = "In progress";
-  const pulls: any[] = [];
+  const pulls: any[] = [], comments: any[] = [];
   const messages: string[] = [];
   const trees: Record<string, any> = {};
   const api = vi.fn(async (method: string, route: string, body?: any): Promise<any> => {
     if (method === "GET" && route === prefix) return { full_name: repository, default_branch: "trunk" };
-    if (method === "GET" && route.includes("/git/ref/heads/")) return { object: { sha: refs[decodeURIComponent(route.split("/heads/")[1])] } };
+    if (method === "GET" && route.includes("/git/ref/heads/")) {
+      const head = refs[decodeURIComponent(route.split("/heads/")[1])];
+      if (!head) throw Object.assign(new Error("branch missing"), { status: 404 });
+      return { object: { sha: head } };
+    }
     if (method === "GET" && route.includes("/contents/labels/base.json")) {
       const ref = new URL(`https://api.github.com/${route}`).searchParams.get("ref")!;
       return { encoding: "base64", content: Buffer.from(JSON.stringify(manifests[ref])).toString("base64") };
     }
     if (method === "GET" && route.includes("/labels?")) return structuredClone(live);
     if (method === "GET" && route.includes("/pulls?")) return pulls.filter(pull => pull.state !== "closed");
-    if (method === "GET" && route.includes("/files?")) return [{ filename: "labels/base.json" }];
+    if (method === "GET" && route.includes("/files?")) {
+      const pull = pulls.find(pull => pull.number === Number(route.split("/pulls/")[1].split("/")[0]));
+      return JSON.stringify(manifests[refs[pull.head.ref]]) === JSON.stringify(manifests[refs.trunk]) ? [] : [{ filename: "labels/base.json" }];
+    }
     if (method === "GET" && route.includes("/commits?")) return messages.map(message => ({ commit: { message } }));
     if (method === "GET" && route.includes("/git/commits/")) return { tree: { sha: tree } };
     if (method === "POST" && route.endsWith("/git/trees")) {
@@ -46,10 +53,21 @@ function fake() {
       const pull = { ...body, head: { ref: body.head, repo: { full_name: repository } }, number: pulls.length + 1, html_url: "https://github.com/timurproko/MyWorkflows/pull/100" };
       pulls.push(pull); return pull;
     }
-    if (method === "PATCH" && /\/pulls\/\d+$/.test(route)) { Object.assign(pulls[0], body); return pulls[0]; }
+    if (method === "POST" && /\/issues\/\d+\/comments$/.test(route)) { comments.push(body); return body; }
+    if (method === "PATCH" && /\/pulls\/\d+$/.test(route)) {
+      const pull = pulls.find(pull => pull.number === Number(route.split("/").at(-1)));
+      Object.assign(pull, body); return pull;
+    }
     throw new Error(`unexpected ${method} ${route}`);
   });
-  return { api, live, pulls, refs, manifests, messages };
+  return { api, live, pulls, refs, manifests, messages, comments };
+}
+
+function aligned() {
+  const f = fake();
+  f.live.splice(0, f.live.length, ...Object.values(definitions.labels).map(label => ({ ...labelMetadata(label), id: label.reference.id, node_id: label.reference.nodeId })));
+  f.manifests[f.refs.trunk] = reconcileReferenceManifest({ manifest: manifest(), live: f.live }).manifest;
+  return f;
 }
 
 describe("reference identity reconciliation", () => {
@@ -180,6 +198,85 @@ describe("protected reference publication", () => {
     });
     await expect(reconcileReference({ api, apply: true })).rejects.toThrow("manual or unrelated");
     expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+  });
+
+  it("does nothing when no PR exists and the aligned reference already matches main", async () => {
+    const f = aligned();
+    expect((await reconcileReference({ api: f.api, apply: true })).disposition).toBe("unchanged");
+    expect(f.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+    expect(f.pulls).toEqual([]);
+  });
+  it.each(["color", "description"])("retires a %s change reverted to main, then opens a fresh PR for another edit", async field => {
+    const f = aligned(), original = f.live[0][field];
+    f.live[0][field] = field === "color" ? "112233" : "temporary description";
+    await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    const branch = f.pulls[0].head.ref, head = f.refs[branch];
+    f.live[0][field] = original;
+    f.api.mockClear();
+    expect((await reconcileReference({ api: f.api })).disposition).toBe("would-retire");
+    expect(f.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+    expect((await reconcileReference({ api: f.api, apply: true })).disposition).toBe("retired");
+    expect(f.pulls[0].state).toBe("closed");
+    expect(f.comments).toEqual([{ body: expect.stringContaining("reference labels now match the accepted manifest") }]);
+    expect(f.api.mock.calls.filter(([method]) => method !== "GET").map(([method, route]) => [method, route])).toEqual([
+      ["POST", `${prefix}/issues/1/comments`], ["PATCH", `${prefix}/pulls/1`],
+    ]);
+    expect(f.refs[branch]).toBe(head); // No pointless revert commit and no branch deletion.
+    f.live[0][field] = field === "color" ? "334455" : "later description";
+    expect((await reconcileReference({ api: f.api, apply: true, now: () => 124 })).disposition).toBe("published");
+    expect(f.pulls).toHaveLength(2);
+    expect(f.pulls[1].head.ref).toBe("chore/reference-labels-124");
+  });
+  it.each([false, true])("accepts a previously generated empty diff; a new edit=%s determines reuse versus retirement", async newEdit => {
+    const f = aligned(); f.live[0].color = "112233";
+    await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    // Simulate the prior publisher's trusted revert commit, which left an empty PR open.
+    const head = f.refs[f.pulls[0].head.ref];
+    f.manifests[head] = structuredClone(f.manifests[f.refs.trunk]);
+    f.messages.push(f.messages[0]);
+    f.live[0].color = newEdit ? "334455" : definitions.labels["under-review"].color;
+    const result = await reconcileReference({ api: f.api, apply: true });
+    expect(result.disposition).toBe(newEdit ? "published" : "retired");
+    expect(f.pulls).toHaveLength(1);
+    expect(f.pulls[0].state === "closed").toBe(!newEdit);
+  });
+  it.each([false, true])("after a merged PR, deleted branch=%s, uses accepted main and opens a fresh PR only for a new edit", async deleted => {
+    const f = aligned(); f.live[0].description = "accepted description";
+    await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    const branch = f.pulls[0].head.ref, accepted = f.manifests[f.refs[branch]];
+    f.refs.trunk = "f".repeat(40); f.manifests[f.refs.trunk] = structuredClone(accepted);
+    Object.assign(f.pulls[0], { state: "closed", merged: true });
+    if (deleted) delete f.refs[branch];
+    f.api.mockClear();
+    expect((await reconcileReference({ api: f.api, apply: true })).disposition).toBe("unchanged");
+    expect(f.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+    f.live[0].description = "next description";
+    const result = await reconcileReference({ api: f.api, apply: true, now: () => 124 });
+    expect(result.disposition).toBe("published");
+    expect(result.manifest.labels["under-review"].previousNames).toEqual(accepted.labels["under-review"].previousNames);
+    expect(f.pulls[1].head.ref).toBe("chore/reference-labels-124");
+  });
+  it("fails visibly without writes when an open PR's branch is missing, and recovers after the person closes it", async () => {
+    const f = fake(); await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    delete f.refs[f.pulls[0].head.ref]; f.api.mockClear();
+    await expect(reconcileReference({ api: f.api, apply: true })).rejects.toMatchObject({ status: 404 });
+    expect(f.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+    f.pulls[0].state = "closed";
+    expect((await reconcileReference({ api: f.api, apply: true, now: () => 124 })).disposition).toBe("published");
+    expect(f.pulls[1].head.ref).toBe("chore/reference-labels-124");
+  });
+  it("leaves a branch orphaned by PR-creation failure untouched and publishes a fresh branch/PR on the next event", async () => {
+    const f = fake();
+    const failed = async (method, route, body?) => {
+      if (method === "POST" && route.endsWith("/pulls")) throw new Error("PR creation denied");
+      return f.api(method, route, body);
+    };
+    await expect(reconcileReference({ api: failed, apply: true, now: () => 123 })).rejects.toThrow("creation denied");
+    const orphan = f.refs["chore/reference-labels-123"];
+    expect(orphan).toBeTruthy(); expect(f.pulls).toHaveLength(0);
+    expect((await reconcileReference({ api: f.api, apply: true, now: () => 124 })).disposition).toBe("published");
+    expect(f.refs["chore/reference-labels-123"]).toBe(orphan);
+    expect(f.pulls[0].head.ref).toBe("chore/reference-labels-124");
   });
 
   it("creates a different branch after a previous PR closes", async () => {

@@ -49,6 +49,23 @@ Names must be nonempty, trimmed, control-character-free and at most 50 Unicode c
 
 Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. The existing delivery bot can promote it and run required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
 
+A metadata edit reverted to the accepted manifest before merge retires its generated PR: after the usual source/head preflight, the publisher comments that the reference now matches main and closes the PR instead of writing a pointless revert commit. Read-only mode reports `would-retire` without commenting/closing. Alias-history changes remain meaningful and are not discarded just because the display name reverted.
+
+### Pending reconciliation states
+
+For a valid managed edit or manual reconciliation:
+
+| State | Next reconciliation |
+| --- | --- |
+| No PR | No-op if the reference matches accepted main; otherwise publish a fresh topic PR |
+| Open with diff | Update the same trusted branch; no-op if unchanged; comment/close if the proposed manifest now equals main |
+| Open with empty diff | Accept trusted history instead of rejecting the empty files list; retire if still matching main, or reuse for a new meaningful edit |
+| Open after base refresh | Validate trusted base ancestry/content and unchanged topic manifest, then reconcile normally |
+| Closed unmerged by the person | Leave the closed PR/branch untouched; if source drift persists, the next event opens a fresh PR (closing is not an opt-out) |
+| Merged | Use the newly accepted main/history; no-op until a new edit needs a fresh PR |
+| Branch deleted | If its PR is closed, reconcile from main normally; if still open, fail visibly without writes until a person restores the branch or closes that PR |
+| Branch exists without PR | Do not overwrite or delete the orphan; if a diff remains, publish a fresh uniquely named branch/PR |
+
 The workflow summary links the PR and shows the proposed manifest. Between the UI edit and PR merge, the Labels page shows the edit but runners/consumers use the **previously accepted manifest**. Ordinary reference sync compares the live id and metadata with the recorded reference snapshot, checks for pending reference PRs, and rereads immediately before PATCH. UI drift or a pending reconciliation blocks source writes rather than restoring stale accepted metadata. Initial source renames emit events that update the accepted snapshots through this same PR path.
 
 GitHub has no atomic compare-and-update label endpoint: a UI edit between the last source read and PATCH remains possible. During bootstrap, an exact reversion to the original snapshot before its event/pending PR is observed is likewise indistinguishable from the not-yet-applied migration. Avoid concurrent UI edits during initial alignment; reconcile and inspect the event/PR history if this occurs. This is not an atomic synchronization guarantee.
