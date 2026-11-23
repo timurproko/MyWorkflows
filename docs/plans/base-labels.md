@@ -4,7 +4,7 @@
 
 Define the delivery workflow's base labels once in MyWorkflows and synchronize them in the existing reusable workflow. The review runner sets and clears the advisory Under review label directly; an isolated shared-workflow job clears it when a pull request is closed or merged.
 
-This revised plan supersedes the earlier lease design, following the person's scope decision. There are no leases, heartbeats, comment-state records, supervisors, consumer schedules, new dispatch operations or central repository-discovery workflow. This is planning only: no labels, assignments, permissions, protection rules or consuming repositories have changed. No OpenSpec directory exists here; this document is the planning artifact. Wait for approval before implementing.
+This revised plan supersedes the earlier lease design, following the person's scope decision. There are no leases, heartbeats, comment-state records, supervisors, consumer schedules, new dispatch operations or central repository-discovery workflow. This revised design was approved and is implemented in this PR, with rollout still disabled. No live labels, assignments, variables, permissions, protection rules or consuming repositories have changed. No OpenSpec directory exists here; this document records the approved design. Crew integration remains a separate task.
 
 ## Exact definition and read-only findings
 
@@ -122,7 +122,7 @@ There were 51 candidates, not 51 authorized deletions. Re-audit before any futur
 
 ## Person's remaining actions and rollout
 
-The scope decisions are settled: direct runner-owned labels, isolated close-event cleanup, existing reusable-workflow sync, preserve defaults automatically, and no added Issues grant. Implementation approval is still required; it is not permission for live rollout or pruning.
+The scope decisions are settled: direct runner-owned labels, isolated close-event cleanup, existing reusable-workflow sync, preserve defaults automatically, and no added Issues grant. Implementation was approved; that approval is not permission for live rollout or pruning.
 
 1. After implementation review/merge, the person enables `DELIVERY_LABELS_ENABLED=true` in each chosen consumer. Until then automatic sync and cleanup write nothing. This change does not set that variable or alter any GitHub permissions.
 2. Existing `main` callers need no migration, schedule, new inputs or protection change. Pinned callers need their normal reviewed pin update. Label sync occurs on their next forwarded event; an idle adopter waits for such an event or an explicitly requested manual sync.
@@ -134,7 +134,7 @@ Update README/owner documentation and the shared change-delivery skill with the 
 
 ## Ordered implementation outcomes and targeted checks
 
-These groups match the draft PR's unchecked Implementation outcomes, in order. None is implemented.
+These delivered groups match the PR's Implementation outcomes, in order. Tests use fake GitHub/Core inputs; no label writes are performed against a real repository.
 
 1. **A gated base-label manifest synchronizes calling repositories through the existing reusable workflow.**
    - Manifest/schema, report/apply CLI, repository-scoped App writer and isolated sync job; default-disabled variable and existing manual dry-run behavior.
@@ -149,4 +149,4 @@ These groups match the draft PR's unchecked Implementation outcomes, in order. N
    - README, owner docs and shared skill describe exact key/name, signed-in add/remove, verdict/stop/finish/death cleanup, recovery limits, no merge gate, event-driven sync, enablement and optional pruning.
    - Targeted workflow/template/permission contract checks ensure no new caller inputs/events/schedules, no Issues expansion and no review protocol or supervisor. Crew's own fake-Core/GitHub lifecycle tests belong to its separate task.
 
-Planning validation is document/body validation and read-only permission/audit research only. Implementation uses quick outcome-specific checks; broad CI remains the integration gate. No label writes or reviewer launches have been performed for this revised plan.
+Planning validation used document/body checks and read-only permission/audit research. Implementation adds outcome-specific tests; the maintainer also requested the complete CI-equivalent suite before handoff. Broad CI remains the integration gate. No live label writes, rollout enablement or reviewer launches are part of this change.

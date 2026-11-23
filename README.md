@@ -33,6 +33,21 @@ for that PR, and only with green CI on its current head.
 The target branch is the repository's default branch. Only repositories that need different protection add the
 optional override described below.
 
+## Base labels and agent review
+
+`labels/base.json` centrally defines the base palette, starting with `🤖 Under review`.
+The existing Delivery workflow syncs definitions and removes that PR assignment on close/merge, but both jobs
+are **disabled by default**: only the maintainer setting the consumer's `DELIVERY_LABELS_ENABLED` variable to
+exactly `true` enables writes. No variable or label is changed by adopting this code alone.
+
+Synchronization happens on each consumer's next delivery event, including after definition changes; idle
+repositories wait. Defaults and custom labels are never deleted automatically. Optional pruning of unused,
+unmodified GitHub defaults requires a separate explicit command and consent.
+
+The agent-review runner adds/removes Under review directly with its signed-in credential; crew integration is a
+separate task. The label is advisory, never a merge gate. Existing App Pull requests write permission suffices;
+no added Issues grant or caller change is needed. See [enablement, permissions and the exact review contract](docs/delivery-labels.md).
+
 ## Local setup, once per machine
 
 ```bash
@@ -52,6 +67,7 @@ instead; run `delivery install` again to return to the managed copy.
 | Command | Purpose |
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
+| `delivery labels --repo <owner/name>` | Read-only base-label diff; explicit `--apply` syncs definitions; `--prune-unused-defaults` instead reports defaults eligible for separately authorized pruning |
 | `delivery start <type>/<short-name>` | Start, or return to, one task's checkout and print its folder: `.worktrees/<short-name>`, or a pool slot when pooled worktrees are on |
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them, and returns pool slots to their pool |
 | `delivery finish <worktree>` | Remove one task's worktree and its merged branch; `--force` also discards its uncommitted files, never unmerged commits |
@@ -153,6 +169,7 @@ does not bypass GitHub's plan or permission restrictions.
 - `skills/change-delivery/` - the one agent skill for every repository.
 - `bin/delivery.mjs` - the local command.
 - `templates/` - files a repository copies when it adopts the workflow.
+- `labels/base.json` - the shared palette; [label behavior and rollout](docs/delivery-labels.md).
 - `test/` - `npm test`.
 
 ## Status
@@ -164,3 +181,5 @@ automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
 shared skill, local worktree cleanup and the machine bootstrap.
 A repository without OpenSpec gets the same flow: its pull requests leave out the Automation section.
+Base-label sync and closed-PR review-label cleanup are available behind the default-disabled rollout variable;
+review-runner hooks in crew are separate work, not implemented here.
