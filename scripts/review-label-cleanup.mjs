@@ -1,5 +1,12 @@
 import { labelApi, labelNames, loadBaseLabels, validateManifest, validateRepository } from "./repository-labels.mjs";
 
+export function managedReviewNames(manifest) {
+  validateManifest(manifest);
+  const keys = ["under-review", "review-approved", "review-changes-needed"];
+  if (keys.some(key => !manifest.labels[key])) throw new Error("review cleanup requires all three managed review roles");
+  return keys.flatMap(key => labelNames(manifest.labels[key]));
+}
+
 /** Event-only final fallback. Normal review lifetime is owned by the signed-in review runner. */
 export async function cleanupReviewLabel({ repository, event, api = labelApi, manifest }) {
   validateRepository(repository);
@@ -9,10 +16,14 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     || event.pull_request.state !== "closed" || event.pull_request.base?.repo?.full_name !== repository) {
     throw new Error("review-label cleanup requires a matching closed pull-request event");
   }
-  manifest = validateManifest(manifest === undefined ? await loadBaseLabels() : manifest);
-  const keys = ["under-review", "review-approved", "review-changes-needed"];
-  if (keys.some(key => !manifest.labels[key])) throw new Error("review cleanup requires all three managed review roles");
-  const names = keys.flatMap(key => labelNames(manifest.labels[key]));
+  return cleanupClosedReviewLabels({ repository, number, api, manifest, apply: true });
+}
+
+/** Shared manual/event core. Never trust a listing or old event as the current PR state. */
+export async function cleanupClosedReviewLabels({ repository, number, api = labelApi, manifest, apply = false }) {
+  validateRepository(repository);
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error("invalid pull-request number");
+  const names = managedReviewNames(manifest === undefined ? await loadBaseLabels() : manifest);
   const prefix = `repos/${repository}`;
   async function currentState() {
     const pull = await api("GET", `${prefix}/pulls/${number}`);
@@ -34,12 +45,17 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     throw new Error("pull-request label pagination limit exceeded");
   }
   if (await currentState() === "open") return { number, disposition: "reopened" };
+  if (!apply) {
+    const names = await assignedReviewNames();
+    if (await currentState() === "open") return { number, disposition: "reopened" };
+    return { number, disposition: names.length ? "would-remove" : "absent", names };
+  }
   let removed = false;
   // Sync can rename an assigned definition while this independent job is removing it.
   // Rescan every managed role after removals/404s, not just the now-missing old spelling.
   for (let pass = 0; pass <= names.length; pass++) {
     const assigned = await assignedReviewNames();
-    if (!assigned.length) return { number, disposition: removed ? "removed" : "absent" };
+    if (!assigned.length) return { number, disposition: await currentState() === "open" ? "reopened" : removed ? "removed" : "absent" };
     for (const name of assigned) {
       if (await currentState() === "open") return { number, disposition: "reopened" };
       try {

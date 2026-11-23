@@ -24,6 +24,8 @@ Status: implemented; 49 targeted cleanup regressions pass, including all-role re
 
 ### 2. A report-first labels-sweep command cleans only managed assignments on already-closed pull requests when explicitly applied
 
+Status: implemented; 37 sweep regressions and all 49 cleanup regressions pass with fake APIs. Neither live sweep mode was executed.
+
 - Add `delivery labels-sweep --repo owner/name` as a read-only report, with explicit `--apply` enabling assignment removals using the signed-in credential. Validate arguments and repository identity before requests; support both repo flag forms and reject unknown options.
 - Fetch and validate one manifest snapshot, list closed pull requests with pagination, validate returned identities/states, and paginate their assigned labels. Report PR numbers and exact managed current/historical assignments without writes by default. Do not enumerate issues as pull requests or touch open PRs.
 - Share the closed-PR cleanup core rather than weakening the event-only entry point or fabricating closure events. Apply freshly validates each PR and checks for reopen before every removal, uses the same rescans/bounds/404 confirmation, and reports skipped reopenings and failures honestly. A listing is not write authorization for an open PR.
