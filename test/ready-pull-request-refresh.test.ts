@@ -23,6 +23,8 @@ interface FakePull {
   baseRepository?: string;
   headRepository?: string | null;
   head: string;
+  author?: string;
+  title?: string;
   behind?: number;
   conflict?: boolean;
   raceTo?: string;
@@ -33,6 +35,8 @@ interface FakePull {
 function metadata(pull: FakePull): Record<string, unknown> {
   return {
     number: pull.number,
+    user: { login: pull.author ?? "maintainer" },
+    title: pull.title ?? "A change",
     state: pull.state ?? "open",
     draft: pull.draft ?? false,
     base: { ref: pull.base ?? "develop", repo: { full_name: pull.baseRepository ?? repository } },
@@ -107,6 +111,9 @@ describe("ready pull-request refresh classification", () => {
     ["fork", { headRepository: "someone/fork" }, "skipped"],
     ["deleted fork", { headRepository: null }, "skipped"],
     ["foreign base repository", { baseRepository: "someone/a1" }, "skipped"],
+    ["Dependabot", { author: "dependabot[bot]" }, "skipped"],
+    ["other bot", { author: "openspec-ci[bot]" }, "eligible"],
+    ["Dependabot-like title", { title: "chore: bump actions/create-github-app-token" }, "eligible"],
     ["same-repository ready", {}, "eligible"],
   ])("classifies a %s pull request explicitly", (_label, override, disposition) => {
     expect(classifyRefreshCandidate(metadata({ number: 7, head: sha(1), ...override }), repository).disposition).toBe(disposition);
@@ -156,6 +163,20 @@ describe("ready pull-request refresh reconciliation", () => {
     ]);
     expect(github.calls.filter(call => call.startsWith("PUT")).every(call => call.endsWith("/update-branch"))).toBe(true);
     expect(github.calls.some(call => /merge|auto_merge|dispatches|check-runs|statuses|reviews/.test(call))).toBe(false);
+  });
+
+  it("leaves Dependabot rebasing to Dependabot regardless of title, without excluding other bots", async () => {
+    const github = new FakeGitHub([
+      { number: 1, head: sha(1), behind: 2, author: "dependabot[bot]", title: "An ordinary change" },
+      { number: 2, head: sha(2), behind: 2, author: "openspec-ci[bot]", title: "chore: bump a dependency" },
+      { number: 3, head: sha(3), behind: 2, title: "chore: bump actions/create-github-app-token" },
+    ]);
+    const results = await refreshReadyPullRequests({ repository, request: github.request });
+    expect(results.map(result => result.disposition)).toEqual(["skipped", "updated", "updated"]);
+    expect(results[0]).toMatchObject({ number: 1, reason: "Dependabot owns rebasing this pull request" });
+    expect(github.calls.some(call => call.includes(`...${sha(1)}`))).toBe(false);
+    expect(github.calls.filter(call => call.includes("/git/ref/"))).toHaveLength(2);
+    expect(github.updates).toEqual([{ number: 2, expected: sha(2) }, { number: 3, expected: sha(3) }]);
   });
 
   it("is idempotent across duplicate triggers", async () => {

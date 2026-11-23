@@ -16,6 +16,14 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
 for that PR, and only with green CI on its current head.
 
+## Ready pull-request refresh
+
+After a merge, the shared job refreshes stale, ready PRs with same-repository heads against the delivery target,
+using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
+not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
+Consumers tracking the shared workflow and tooling at `main` receive this policy without caller edits after merge.
+
 ## Adopting it in a repository
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.

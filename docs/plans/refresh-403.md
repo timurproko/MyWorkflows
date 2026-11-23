@@ -1,6 +1,6 @@
 # Isolate refresh refusals and avoid misleading advisory cancellations
 
-Status: proposed; awaiting approval before implementation.
+Status: approved for implementation; outcomes tracked below.
 
 ## Diagnosis
 
@@ -35,6 +35,8 @@ Do not widen App permissions, add a token fallback, dispatch/rerun workflows, re
 
 ### 1. Dependabot-owned pull requests are excluded from delivery branch refresh while other eligible authors remain supported
 
+Status: implemented, with author/title controls and no-comparison/no-update regressions.
+
 - Add fresh author-based Dependabot exclusion in the shared classifier, with an explicit skip reason explaining Dependabot's ownership of rebasing.
 - Extend fake PR metadata and classification/reconciliation regressions: Dependabot is skipped before comparison/update, regardless of title; human and other bot authors remain eligible.
 - Document the conservative ownership policy and shared-workflow rollout in the README.
@@ -67,4 +69,4 @@ A read-only snapshot found no ready PRs in a1, crew, xrbuild or its private work
 
 Implement one outcome at a time, with targeted tests before each push and the matching PR outcome ticked immediately afterwards. Run the complete `npm test` suite and the generated-palette full-suite variants (`node test/generated-palettes.mjs`) once implementation is complete, without weakening assertions or timeouts. Bring the branch up to date, add Acceptance, validate the final body and tick the last outcome; readiness belongs to the bot. Inspect required checks on the exact final head and report their completed status. Do not mark ready, arm auto-merge or merge.
 
-At this planning handoff no implementation or test execution has occurred; full-suite execution and final implementation-head checks require approval first. The third outcome includes the coordinator's additional defect and its contract tests; all three outcomes are proposed together for approval.
+The coordinator approved all three outcomes, including the added concurrency/event defect. Implementation and validation results are recorded as they land; final checks and the full-suite result belong to the completed implementation handoff.

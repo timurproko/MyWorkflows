@@ -5,8 +5,8 @@ const DEFAULT_MAX_PAGES = 10;
 
 /**
  * Classify one freshly read pull request for base-branch refresh. Only an
- * open, non-draft pull request whose base and head both live in the governed
- * repository and whose base is the delivery target may be updated.
+ * open, non-draft, non-Dependabot pull request whose base and head both live
+ * in the governed repository and whose base is the delivery target may be updated.
  */
 export function classifyRefreshCandidate(pull, repository) {
   const number = pull?.number;
@@ -17,6 +17,7 @@ export function classifyRefreshCandidate(pull, repository) {
   if (pull.state !== "open") return skip("pull request is not open");
   if (typeof pull.draft !== "boolean") return fail("draft state is malformed");
   if (pull.draft) return skip("draft pull request");
+  if (pull.user?.login === "dependabot[bot]") return skip("Dependabot owns rebasing this pull request");
   if (pull.base?.ref !== targetBranch()) return skip(`base branch is not ${targetBranch()}`);
   if (pull.base?.repo?.full_name !== repository) return skip("base repository is not the governed repository");
   if (pull.head?.repo?.full_name !== repository) return skip("head repository is a fork or unavailable");
