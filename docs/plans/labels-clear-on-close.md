@@ -35,6 +35,8 @@ Status: implemented; 37 sweep regressions and all 49 cleanup regressions pass wi
 
 ### 3. Published guidance and runner contracts consistently describe clear-on-close and explicit historical recovery
 
+Status: implemented; all 92 cleanup/sweep/guidance targeted regressions pass. Older conflicting plans are explicitly historical and superseded.
+
 - Update `README.md`, `docs/delivery-labels.md` and `skills/change-delivery/SKILL.md`: all three roles and every historical alias are cleared on closure; reopened PRs get no automatic replacement label; future events are best effort and do not backfill old closures.
 - Document exact report-first `labels-sweep` usage, explicit apply consent, repository scope, signed-in credential, pagination/open-PR safety and failure/race limits. Distinguish the manual backfill from unchanged crew PR #7 lifecycle limits: no heartbeat, lease, crash-expiry guarantee or automatic historical sweep.
 - Revise the published runner contract text that promises verdict persistence after closure. Mark conflicting historical plan sections as superseded without rewriting historical evidence. Add contract regressions preventing reintroduction of verdict-survival promises or accidental automatic sweep wiring.
@@ -44,4 +46,4 @@ Status: implemented; 37 sweep regressions and all 49 cleanup regressions pass wi
 
 Use quick targeted cleanup/sweep/CLI/documentation checks before each outcome push and tick its matching PR checkbox as delivered. Run the complete `npm test` suite and `node test/generated-palettes.mjs` (both generated-palette full-suite variants) after implementation; report failures without weakening tests or timeouts. Validate the final PR body, update from the default branch, let the bot handle readiness, and report required-check status on the final head after checks complete. Never manually mark ready, arm auto-merge or merge.
 
-At this proposal stage no runtime behavior is changed, and implementation tests/checks are deferred until approval.
+Implementation validation on Node 24.22.0: the complete published-palette suite passes all 543 tests across 33 files. Both generated-palette full runs pass 542 tests and hit only the previously documented Windows bootstrap setup timeout (5000 ms); the unchanged bootstrap file passes all six tests in a focused rerun. No timeout or assertion was weakened. Final-head Linux required checks, including both complete generated-palette runs, remain the integration gate and will be recorded in the task report after they finish. No live label command or either sweep mode was executed.

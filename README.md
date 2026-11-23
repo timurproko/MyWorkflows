@@ -67,13 +67,18 @@ crew uses one request with a two-second timeout. Crew implementation remains a s
 At review start, add current `under-review` and clear both verdict keys' current/historical assignments before launching the reviewer.
 On `APPROVE` use current `review-approved`; on `CHANGES NEEDED` use current `review-changes-needed`, clearing review/other-verdict aliases.
 Verdicts are mutually exclusive. Failed launch/report, stop, finish, observed death or abandonment clears only
-in-progress names without inventing a verdict. Closed-PR cleanup clears only `under-review` current/historical
-assignments; both verdict keys' current/historical assignments survive. Unrelated labels are preserved.
+in-progress names without inventing a verdict. Closed/merged cleanup removes all three managed roles'
+current/historical assignments, including both verdicts. Unrelated labels are preserved. A reopened PR has no
+robot review label until the next review sets one; cleanup never restores removed assignments.
 All three labels are advisory; absence is not approval, and a retained verdict does not guarantee later commits were reviewed.
 The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
-See [reference updates, transition/race limits and the exact runner contract](docs/delivery-labels.md).
+Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
+read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
+checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
+uses the signed-in credential and never changes definitions or open PRs. See [manual recovery, reference
+updates, transition/race limits and the exact runner contract](docs/delivery-labels.md).
 
 ## Local setup, once per machine
 
@@ -95,6 +100,7 @@ instead; run `delivery install` again to return to the managed copy.
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
 | `delivery labels --repo <owner/name>` | Read-only base-label diff; explicit `--apply` syncs definitions; `--prune-unused-defaults` instead reports defaults eligible for separately authorized pruning |
+| `delivery labels-sweep --repo <owner/name> [--apply]` | Report managed assignments on closed/merged PRs; explicit apply removes them with fresh closure checks, never automatically |
 | `delivery labels-reference [--apply]` | Read-only reconciliation from MyWorkflows' live reference labels; explicit apply publishes a protected manifest PR, never writes labels |
 | `delivery start <type>/<short-name>` | Start, or return to, one task's checkout and print its folder: `.worktrees/<short-name>`, or a pool slot when pooled worktrees are on |
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them, and returns pool slots to their pool |
