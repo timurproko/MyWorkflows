@@ -52,6 +52,8 @@ Status: implemented; targeted sync/cleanup tests pass (73 tests).
 
 ### 2. Adoption and review guidance describe default-on labels, opt-out and version-aligned consumer updates
 
+Status: implemented; documentation/skill contracts pass (4 tests).
+
 - Update `README.md`, `docs/delivery-labels.md` and `skills/change-delivery/SKILL.md` to remove pending per-repository enablement instructions and document the exact opt-out semantics.
 - Keep the signed-in review-runner ownership contract, advisory status, separate crew integration, permission warnings, event cadence, historical cleanup limitation and separate pruning consent intact.
 - Explain moving versus pinned callers and matching `tools_ref`; record the read-only consumer findings without exposing private repository identity.
@@ -59,4 +61,4 @@ Status: implemented; targeted sync/cleanup tests pass (73 tests).
 
 ## Validation and handoff
 
-Before implementation approval, validate this plan's PR body and run the unmodified full suite as a baseline. After approval, use targeted label/cleanup/contract tests per outcome, then run CI's full commands under Node 24: `npm ci --ignore-scripts` followed by `npm test`, once before reporting implementation. No live write is needed for any validation. Keep the PR draft, do not mark it ready or merge it, and stop after presenting this plan until implementation is explicitly approved.
+The plan's PR body validated before approval. The unmodified CI-equivalent baseline had 336 passing tests and one unchanged bootstrap test exceeding its 5000 ms timeout. Both approved outcomes now have passing targeted checks. Run CI's full commands under Node 24: `npm ci --ignore-scripts` followed by `npm test`, once before reporting implementation; record the result in the task report. No live write is needed for any validation. Do not manually mark the PR ready or merge it; readiness belongs to the delivery bot.

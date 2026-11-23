@@ -23,20 +23,47 @@ describe("label adoption and separate review-runner contract", () => {
     expect(skill).toMatch(/confirm access and absence/i);
   });
 
-  it("states the gate, permission alternatives and non-instant synchronization cadence", async () => {
+  it("states default-on opt-out semantics, permissions and non-instant synchronization cadence", async () => {
     const docs = await file("docs/delivery-labels.md");
     const readme = await file("README.md");
+    const skill = await file("skills/change-delivery/SKILL.md");
+    for (const text of [docs, readme, skill]) {
+      expect(text).toContain("enabled by default");
+      expect(text).toContain("DELIVERY_LABELS_ENABLED=false");
+      expect(text).toContain("case-insensitive, without whitespace");
+      expect(text).toContain("Unset, empty, `true` and any other value");
+      expect(text).toContain("opt-out");
+      expect(text).toContain("Manual dry runs stay read-only");
+      expect(text).not.toMatch(/disabled by default|default-disabled|pending maintainer enablement|after enablement/i);
+    }
     for (const text of [docs, readme]) {
-      expect(text).toContain("DELIVERY_LABELS_ENABLED");
       expect(text).toContain("Pull requests write");
       expect(text).toMatch(/no added Issues/i);
       expect(text).toContain("idle");
       expect(text).toMatch(/separate (?:crew )?task|separate work/);
     }
+    expect(docs).toContain("` false ` does not");
     expect(docs).toContain("No label job is a prerequisite");
     expect(docs).toMatch(/no time-based/i);
     expect(docs).toContain("historical PRs");
     expect(docs).toContain("Pruning additionally needs visibility of both issues and PRs");
+  });
+
+  it("documents aligned version pins and each known consumer's adoption path", async () => {
+    const docs = await file("docs/delivery-labels.md");
+    for (const path of ["docs/delivery-labels.md", "README.md", "skills/change-delivery/SKILL.md"]) {
+      const text = await file(path);
+      expect(text).toMatch(/workflow\s+reference/);
+      expect(text).toContain("matching `tools_ref`");
+      expect(text).toContain("tracking `main`");
+    }
+    expect(docs).toContain("`tools_ref` defaults to `main`");
+    expect(docs).toContain("A workflow pin alone does not pin scripts");
+    expect(docs).toContain("pin tooling to the same old revision");
+    for (const consumer of ["a1", "crew", "herdr-app", "xrbuild", "private workspace", "MyWorkflows"]) {
+      expect(docs).toContain(consumer);
+    }
+    expect(docs).toContain("None of these six consumers needs an update");
   });
 
   it("documents separate pruning consent and keeps automation incapable of invoking it", async () => {
