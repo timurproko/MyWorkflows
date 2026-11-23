@@ -59,6 +59,8 @@ Status: implemented; alias migration and repository-label targeted tests pass.
 
 ### 2. Reference label events and manual reconciliation publish validated manifest updates through protected pull requests
 
+Status: implemented; reference reconciliation/publication tests pass with fake APIs.
+
 - Add a MyWorkflows-only workflow for `label: [edited, created, deleted]` plus a read-only-by-default manual dispatch. Execute only trusted default-branch tooling with a narrowly repository-scoped existing delivery App token for Contents write and Pull requests write when publishing; do not grant extra Issues access or write consumer labels. Treat event names/descriptions as untrusted data.
 - Match source labels by recorded id and node id, never by name. On `edited`, read name/colour/description from the payload and append `changes.name.from` plus the previous manifest name to `previousNames` when applicable. Deduplicate history and exclude the new current name so a rename back is supported. Validate the complete proposed manifest before publication, including cross-key current/alias collisions. Missing/invalid identity or previous-name data produces a visible diagnostic, not a guessed migration.
 - Serialize publication without cancelling earlier events. On each run reconcile the other managed references from live GitHub state too, to catch missed/interleaved edits, while preserving the event's old-name history. Recheck live source state before publication; stale events must not revert a newer live edit. Read the pending reconciliation branch as well as the latest default branch so intermediate aliases survive a burst of edits before merge. Protect unrelated/manual branch edits with head checks; never force-push over them.
