@@ -4,7 +4,7 @@
 
 Extend the shared base palette with explicit agent-review verdict labels so a pull request retains its review result after closure. Keep the existing default-on sync and restrict shared closed-event cleanup to Under review; the review-runner implementation remains separate in timurproko/crew pull request #7.
 
-This is a plan awaiting approval, not an implementation. This repository has no OpenSpec directory. No live repository labels, assignments, variables, permissions or consumer files will be changed by this task.
+This plan is approved for implementation. This repository has no OpenSpec directory. No live repository labels, assignments, variables, permissions or consumer files will be changed by this task.
 
 ## Exact palette and lifecycle
 
@@ -32,6 +32,8 @@ All three labels are advisory, not required checks or merge gates. Absence is no
 These groups match the draft PR's Implementation checklist, in order.
 
 ### 1. The base manifest and sync tests include both exact robot verdict definitions without changing validator behavior
+
+Status: implemented; the manifest and sync/CLI tests cover all three definitions while preserving #27's validator and identity tests.
 
 - Add the two version-1 definitions to `labels/base.json` with the exact keys, Unicode names, colors and empty descriptions above.
 - Update manifest enumeration and sync expectations in `test/repository-labels.test.ts` for the complete palette: exact fields/code points, read-only diff, creation, metadata updates, unchanged definitions and default-on automation.
