@@ -4,7 +4,7 @@
 
 Make base-label synchronization and closed-pull-request Under review cleanup the default behavior of the shared delivery workflow, without per-repository setup. Retain a single explicit opt-out and all existing safety boundaries from the implementation merged in #25.
 
-This is a plan awaiting approval, not an implementation. This repository has no OpenSpec directory. The historical `base-labels.md` plan describes the previous default-disabled policy; this plan supersedes only that rollout policy. No live labels, assignments, variables, credentials, permissions or consumer files are changed by this task.
+This plan was approved for implementation. This repository has no OpenSpec directory. The historical `base-labels.md` plan describes the previous default-disabled policy; this plan supersedes only that rollout policy. No live labels, assignments, variables, credentials, permissions or consumer files are changed by this task.
 
 ## Exact policy
 
@@ -42,6 +42,8 @@ A consumer pinned to a tag or commit does not acquire updated workflow YAML unti
 These outcomes match the draft PR's Implementation checklist, in order.
 
 ### 1. Both isolated automatic label jobs default on with a shared explicit opt-out and regression coverage
+
+Status: implemented; targeted sync/cleanup tests pass (73 tests).
 
 - Update the runner gate, disabled message, both App-token conditions and workflow step names/comments without changing unrelated delivery jobs.
 - Replace disabled-by-default assertions in `test/repository-labels.test.ts` and `test/review-label-cleanup.test.ts`; cover unset, empty, true and arbitrary values enabling both operations, case-insensitive false opt-out, and whitespace behavior.

@@ -189,7 +189,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
-    # Advisory and default-disabled; never a prerequisite of promotion, finalization or the delivery check.
+    # Advisory and default-on unless explicitly opted out; never a delivery prerequisite.
     continue-on-error: true
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -209,9 +209,9 @@ jobs:
         with:
           node-version: 24
 
-      - name: Mint a separate label App token only after enablement
+      - name: Mint a separate label App token unless opted out or read-only
         id: labels-app
-        if: vars.DELIVERY_LABELS_ENABLED == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
+        if: vars.DELIVERY_LABELS_ENABLED != 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -219,7 +219,7 @@ jobs:
           private-key: ${{ secrets.app_private_key }}
           permission-pull-requests: write
 
-      - name: Reconcile definitions or report disabled rollout
+      - name: Reconcile definitions or report explicit opt-out
         env:
           GH_TOKEN: ${{ steps.labels-app.outputs.token || github.token }}
           LABELS_APP_TOKEN: ${{ steps.labels-app.outputs.token }}
@@ -250,9 +250,9 @@ jobs:
         with:
           node-version: 24
 
-      - name: Mint a separate cleanup App token only after enablement
+      - name: Mint a separate cleanup App token unless opted out
         id: cleanup-app
-        if: vars.DELIVERY_LABELS_ENABLED == 'true'
+        if: vars.DELIVERY_LABELS_ENABLED != 'false'
         continue-on-error: true
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
@@ -260,7 +260,7 @@ jobs:
           private-key: ${{ secrets.app_private_key }}
           permission-pull-requests: write
 
-      - name: Remove only Under review or report disabled rollout
+      - name: Remove only Under review or report explicit opt-out
         env:
           GH_TOKEN: ${{ steps.cleanup-app.outputs.token }}
           LABELS_APP_TOKEN: ${{ steps.cleanup-app.outputs.token }}

@@ -96,27 +96,34 @@ describe("central base-label definitions", () => {
   });
 });
 
-describe("default-disabled label automation", () => {
-  it.each([undefined, "", "false", "TRUE", "1"])("does not even call the API without exact enablement: %s", async enabled => {
+describe("default-on label automation with explicit opt-out", () => {
+  it.each([undefined, "", "true", "TRUE", "1", "no", " false "])("syncs by default unless explicitly opted out: %s", async enabled => {
     const api = reads();
-    const report = vi.fn();
-    expect(await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled }), api, report })).toEqual({ disposition: "disabled" });
-    expect(api).not.toHaveBeenCalled();
-    expect(report).toHaveBeenCalledWith(expect.stringContaining("pending maintainer enablement"));
+    const result = await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled }), api, report: vi.fn() });
+    expect(result.applied).toBe(true);
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([["POST", `repos/${repository}/labels`, base]]);
   });
 
-  it("allows an existing manual dry-run to read the diff even with rollout disabled and no App token", async () => {
+  it.each(["false", "False", "FALSE"])("does not even call the API or require an App token when opted out: %s", async enabled => {
+    const api = reads();
+    const report = vi.fn();
+    expect(await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled, LABELS_APP_TOKEN: "", GH_TOKEN: "" }), api, report })).toEqual({ disposition: "disabled" });
+    expect(api).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("explicit DELIVERY_LABELS_ENABLED=false opt-out"));
+  });
+
+  it.each([undefined, "", "true", "false", "FALSE"])("keeps manual dry-runs read-only without an App token: %s", async enabled => {
     const api = reads();
     const result = await runLabelAutomation({ environment: environment({ GITHUB_EVENT_NAME: "workflow_dispatch", LABELS_DRY_RUN: "true",
-      DELIVERY_LABELS_ENABLED: "", LABELS_APP_TOKEN: "", GH_TOKEN: "read-only" }), api, report: vi.fn() });
+      DELIVERY_LABELS_ENABLED: enabled, LABELS_APP_TOKEN: "", GH_TOKEN: "read-only" }), api, report: vi.fn() });
     expect(result.applied).toBe(false);
     expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   });
 
-  it("uses only the separate App token for enabled writes, not a GITHUB_TOKEN fallback", async () => {
+  it.each([undefined, "", "true"])("requires the separate App token for default-on writes without a fallback: %s", async enabled => {
     const api = reads();
     for (const extra of [{ LABELS_APP_TOKEN: "" }, { GH_TOKEN: "read-only" }]) {
-      await expect(runLabelAutomation({ environment: environment(extra), api })).rejects.toThrow("separate delivery App token");
+      await expect(runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled, ...extra }), api })).rejects.toThrow("separate delivery App token");
     }
     expect(api).not.toHaveBeenCalled();
     await runLabelAutomation({ environment: environment(), api, report: vi.fn() });
@@ -151,10 +158,12 @@ describe("default-disabled label automation", () => {
 
   it("keeps the reusable sync job isolated, pinned, gated and free of new caller contracts", async () => {
     const workflow = await readFile(".github/workflows/delivery.yml", "utf8");
-    const sync = workflow.slice(workflow.indexOf("\n  label-sync:"));
+    const sync = workflow.slice(workflow.indexOf("\n  label-sync:"), workflow.indexOf("\n  review-label-cleanup:"));
     expect(sync).toContain("continue-on-error: true");
     expect(sync).not.toContain("needs:");
-    expect(sync).toContain("vars.DELIVERY_LABELS_ENABLED == 'true'");
+    expect(sync).toContain("if: vars.DELIVERY_LABELS_ENABLED != 'false' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run)");
+    expect(sync).toMatch(/\n    continue-on-error: true\n/);
+    expect(sync).not.toContain("vars.DELIVERY_LABELS_ENABLED == 'true'");
     expect(sync).toContain("ref: ${{ inputs.tools_ref }}");
     expect(sync).toContain("persist-credentials: false");
     expect(sync).toContain("permission-pull-requests: write");
