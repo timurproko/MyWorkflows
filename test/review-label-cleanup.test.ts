@@ -70,6 +70,32 @@ describe("closed-PR advisory review-label cleanup", () => {
     expect(api.mock.calls.filter(([method]) => method !== "GET")).toHaveLength(1);
   });
 
+  it.each([
+    { verdicts: ["🤖 Approved"] },
+    { verdicts: ["🤖 Changes needed"] },
+    { verdicts: ["🤖 Approved", "🤖 Changes needed"] },
+  ])("preserves verdict record $verdicts on every closure path", async ({ verdicts }) => {
+    for (const merged of [true, false]) {
+      for (const underReview of [true, false]) {
+        for (const automated of [true, false]) {
+          const retained = [...verdicts, "keep-me"];
+          const { api, applied } = fake({ labels: [...(underReview ? [name] : []), ...retained] });
+          const cleanup = () => automated
+            ? runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: undefined }), event: event(merged), api, report: vi.fn() })
+            : cleanupReviewLabel({ repository, event: event(merged), api });
+          expect(await cleanup()).toEqual({ number: 14, disposition: underReview ? "removed" : "absent" });
+          expect(applied).toEqual(retained);
+          expect(await cleanup()).toEqual({ number: 14, disposition: "absent" });
+          expect(applied).toEqual(retained);
+          // No verdict removal/addition, repository-definition deletion or unrelated assignment change.
+          expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(underReview ? [
+            ["DELETE", `repos/${repository}/issues/14/labels/%F0%9F%A4%96%20Under%20review`],
+          ] : []);
+        }
+      }
+    }
+  });
+
   it("is idempotent on duplicate close events and missing assignments", async () => {
     const { api, applied } = fake();
     await cleanupReviewLabel({ repository, event: event(), api });

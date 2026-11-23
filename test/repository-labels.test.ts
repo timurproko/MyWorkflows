@@ -5,8 +5,13 @@ import { automationMain, runLabelAutomation } from "../scripts/run-label-automat
 
 const repository = "owner/arbitrary-repository";
 const base = { name: "🤖 Under review", color: "840479", description: "" };
+const approved = { name: "🤖 Approved", color: "1a7f37", description: "" };
+const changesNeeded = { name: "🤖 Changes needed", color: "9a6700", description: "" };
+const palette = [base, approved, changesNeeded];
 const custom = { name: "custom", color: "abcdef", description: "keep me", default: false };
-const manifest = () => ({ version: 1, labels: { "under-review": { ...base } } });
+const manifest = () => ({ version: 1, labels: { "under-review": { ...base },
+  "review-approved": { ...approved }, "review-changes-needed": { ...changesNeeded } } });
+const creates = (repository: string) => palette.map(label => ["POST", `repos/${repository}/labels`, label]);
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app-secret", GH_TOKEN: "app-secret", ...extra });
 const reads = (labels: any[] = []) => vi.fn(async (method: string, path: string, _body?: unknown) => {
@@ -44,9 +49,13 @@ describe("shared label repository identity validation", () => {
 });
 
 describe("central base-label definitions", () => {
-  it("matches the exact existing robot label, including empty description and no variation selector", async () => {
-    expect(await loadBaseLabels()).toEqual(manifest());
-    expect([...base.name].map(value => value.codePointAt(0))).toEqual([0x1f916, 32, ...[..."Under review"].map(value => value.codePointAt(0))]);
+  it("matches all three exact robot definitions, including empty descriptions and no variation selectors", async () => {
+    const actual = await loadBaseLabels();
+    expect(actual).toEqual(manifest());
+    for (const [label, suffix] of [[actual.labels["under-review"], "Under review"],
+      [actual.labels["review-approved"], "Approved"], [actual.labels["review-changes-needed"], "Changes needed"]] as const) {
+      expect([...label.name].map(value => value.codePointAt(0))).toEqual([0x1f916, 32, ...[...suffix].map(value => value.codePointAt(0))]);
+    }
   });
 
   it.each([
@@ -67,29 +76,39 @@ describe("central base-label definitions", () => {
   it("reports creates without mutation by default, preserving all unrelated labels", async () => {
     const api = reads([custom, { name: "bug", color: "d73a4a", description: "Something isn't working", default: true }]);
     expect(await syncLabels({ repository, api })).toEqual({ repository, applied: false,
-      labels: [{ key: "under-review", name: base.name, action: "create" }], preserved: ["custom", "bug"] });
+      labels: Object.entries(manifest().labels).map(([key, label]) => ({ key, name: label.name, action: "create" })),
+      preserved: ["custom", "bug"] });
     expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
   });
 
-  it("creates the one managed definition with the original fields", async () => {
+  it("creates all managed definitions with the exact fields", async () => {
     const api = reads([custom]);
     await syncLabels({ repository, api, apply: true });
-    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([["POST", `repos/${repository}/labels`, base]]);
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(creates(repository));
   });
 
   it("updates metadata in place without renaming, deleting or changing assignments", async () => {
-    const api = reads([{ ...base, color: "ffffff", description: "old" }, custom]);
+    const api = reads([...palette.map(label => ({ ...label, color: "ffffff", description: "old" })), custom]);
     await syncLabels({ repository, api, apply: true });
-    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([["PATCH",
-      `repos/${repository}/labels/${encodeURIComponent(base.name)}`, { color: base.color, description: "" }]]);
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(palette.map(label => ["PATCH",
+      `repos/${repository}/labels/${encodeURIComponent(label.name)}`, { color: label.color, description: "" }]));
   });
 
-  it("is a no-op for an exact label or equivalent color/null description", async () => {
-    for (const existing of [base, { ...base, description: null }]) {
-      const api = reads([existing]);
-      expect((await syncLabels({ repository, api, apply: true })).labels[0].action).toBe("unchanged");
+  it("is a no-op for exact definitions or equivalent colors/null descriptions", async () => {
+    for (const existing of [palette, palette.map(label => ({ ...label, color: label.color.toUpperCase(), description: null }))]) {
+      const api = reads(existing);
+      expect((await syncLabels({ repository, api, apply: true })).labels.map(label => label.action)).toEqual([
+        "unchanged", "unchanged", "unchanged",
+      ]);
       expect(api.mock.calls).toHaveLength(1);
     }
+  });
+
+  it("adds only the missing verdict definitions to an existing Under review palette", async () => {
+    const api = reads([base, custom]);
+    const result = await syncLabels({ repository, api, apply: true });
+    expect(result.labels.map(label => label.action)).toEqual(["unchanged", "create", "create"]);
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(creates(repository).slice(1));
   });
 
   it("leaves removed manifest entries unmanaged and refuses case collisions before all writes", async () => {
@@ -101,7 +120,7 @@ describe("central base-label definitions", () => {
 
   it("paginates the complete comparison before mutating", async () => {
     const labels = Array.from({ length: 100 }, (_, n) => ({ ...custom, name: `custom-${n}` }));
-    const api = reads([...labels, base]);
+    const api = reads([...labels, ...palette]);
     expect((await syncLabels({ repository, api, apply: true })).preserved).toHaveLength(100);
     expect(api.mock.calls).toEqual([["GET", `repos/${repository}/labels?per_page=100&page=1`], ["GET", `repos/${repository}/labels?per_page=100&page=2`]]);
   });
@@ -131,7 +150,7 @@ describe("default-on label automation with explicit opt-out", () => {
     expect(result).toMatchObject({ repository, applied: true, preserved: ["custom"] });
     expect(api.mock.calls).toEqual([
       ["GET", `repos/${repository}/labels?per_page=100&page=1`],
-      ["POST", `repos/${repository}/labels`, base],
+      ...creates(repository),
     ]);
   });
 
@@ -145,7 +164,7 @@ describe("default-on label automation with explicit opt-out", () => {
     const api = reads();
     const result = await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled }), api, report: vi.fn() });
     expect(result.applied).toBe(true);
-    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([["POST", `repos/${repository}/labels`, base]]);
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(creates(repository));
   });
 
   it.each(["false", "False", "FALSE"])("does not even call the API or require an App token when opted out: %s", async enabled => {

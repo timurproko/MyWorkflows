@@ -147,20 +147,35 @@ Delivery labels are enabled by default: the next forwarded delivery event syncs 
 per-repository setup. The calling repository's `DELIVERY_LABELS_ENABLED=false` is the explicit opt-out for both
 automatic writers (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value
 remain enabled. Do not create or change review labels for an opted-out repository. Once the base palette is
-available, whoever runs the agent review owns the `under-review` entry in the shared `labels/base.json`
-(GitHub name `🤖 Under review`). Use the review runner's signed-in credential, not the delivery App private
-key, and plain PR add-label/remove-label operations; no lease, heartbeat or dispatch protocol exists.
+available, whoever runs the agent review owns these three assignments from the shared `labels/base.json`,
+each with an empty description:
 
-- Add the label when the review starts, before launching the reviewer, even if the PR is draft or CI is pending.
-- Remove it on either verdict, `APPROVE` or `CHANGES NEEDED`, and on failed launch/report, stop, finish, observed
-  death or abandonment. Make retries idempotent, preserve all other labels and report permission/API failures.
+| Key | GitHub name | Color |
+| --- | --- | --- |
+| `under-review` | 🤖 Under review | `840479` |
+| `review-approved` | 🤖 Approved | `1a7f37` |
+| `review-changes-needed` | 🤖 Changes needed | `9a6700` |
+
+Every name starts with U+1F916 and one ordinary space, with no variation selector. Use the review runner's
+signed-in credential, not the delivery App private key, and plain PR add-label/remove-label operations;
+no lease, heartbeat or dispatch protocol exists.
+
+- At review start, add Under review and remove any previous verdict label (both Approved and Changes needed)
+  before launching the reviewer, even if the PR is draft or CI is pending.
+- On `APPROVE`, remove Under review and add Approved; on `CHANGES NEEDED`, remove Under review and add Changes needed.
+  Verdicts are mutually exclusive; remove any opposite verdict and preserve unrelated labels.
+- On failed launch/report, stop, finish, observed death or abandonment, remove Under review without inventing a
+  verdict. Make retries idempotent, preserve all other labels and report permission/API failures.
   Confirm access and absence before treating a remove-label 404 as success.
 - Complete old cleanup before replacing a reviewer. Use one owner per PR, or retain the label until that owner's
   last local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
-- The label is advisory: never make it a required check or merge gate, and never interpret absence as approval.
-  Unless opted out, the shared workflow clears it on successfully processed closed/merged PR events. It does not
-  observe crew reports, guarantee timed crash expiry, or sweep historical PRs. A lost runner leaves an open PR
-  labeled until existing recovery or a person clears it. Crew hooks are a separate integration task.
+- All three labels are advisory: never make them a required check or merge gate; absence is not approval.
+  A retained verdict records a review result, not a guarantee that later commits were reviewed.
+  Unless opted out, on successfully processed closed/merged PR events the shared workflow removes ONLY Under review;
+  Approved and Changes needed survive closure as a review record. Cleanup never removes or adds a verdict label.
+  It does not observe crew reports, guarantee timed crash expiry, or sweep historical PRs. A lost runner leaves
+  an open PR labeled until existing recovery or a person clears it. Crew hooks are a separate integration task
+  in timurproko/crew PR #7, not implemented here.
 - Callers tracking `main` need no edit; idle repositories wait for their next delivery event. Version-pinned
   callers must update both the workflow reference and matching `tools_ref` to a revision containing this policy;
   a workflow pin alone leaves scripts on the existing `tools_ref` default of `main` unless explicitly aligned.
