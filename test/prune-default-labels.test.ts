@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import definitions from "./fixtures/bootstrap-labels.json";
-import { GITHUB_DEFAULT_LABELS, labelUsage, pruneDefaultLabels } from "../scripts/prune-default-labels.mjs";
-import { labelsMain } from "../scripts/repository-labels.mjs";
+import { GITHUB_DEFAULT_LABELS, labelUsage, pruneDefaultLabels as prune } from "../scripts/prune-default-labels.mjs";
+import { labelsMain as cliMain } from "../scripts/repository-labels.mjs";
 
 const repository = "owner/repository";
+const pruneDefaultLabels = options => prune({ manifest: structuredClone(definitions), ...options });
+const labelsMain = (args, options) => cliMain(args, { manifest: structuredClone(definitions), ...options });
 const defaults = () => GITHUB_DEFAULT_LABELS.map((label, n) => ({ ...label, default: true, id: n + 1 }));
 function fake(labels = defaults(), usage: Record<string, any[]> = {}, fresh: Record<string, any> = {}, laterUsage?: Record<string, any[]>) {
   const callsPerName = new Map<string, number>();

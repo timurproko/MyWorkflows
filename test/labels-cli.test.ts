@@ -6,6 +6,7 @@ import definitions from "../labels/base.json";
 
 const execute = promisify(execFile);
 const label = { ...GITHUB_DEFAULT_LABELS[1], default: true, id: 1 };
+const managedBug = Object.values(definitions.labels).some(label => [label.name, ...label.previousNames, label.reference.name].some(name => name.normalize("NFC").toLowerCase() === "bug"));
 // Exercise the real bin entry point, replacing every subprocess before importing it.
 // No gh executable, credential or network request is used, even if a test regresses.
 const cli = `
@@ -17,7 +18,7 @@ const cli = `
     if (command !== "gh" || args[0] !== "api" || args[args.indexOf("-X") + 1] !== "GET") throw new Error("unexpected subprocess or write");
     const path = args.at(-1);
     console.error("REQUEST " + path);
-    return { stdout: JSON.stringify(path.includes("/issues?") ? [] : [${JSON.stringify(label)}]) };
+    return { stdout: JSON.stringify(path.includes("/issues?") || !process.argv.includes("--prune-unused-defaults") ? [] : [${JSON.stringify(label)}]) };
   };
   childProcess.execFile = stub;
   syncBuiltinESMExports();
@@ -34,14 +35,13 @@ describe("delivery labels CLI", () => {
         const { stdout, stderr } = await run([...repoArgs, ...(prune ? ["--prune-unused-defaults"] : [])]);
         const result = JSON.parse(stdout);
         expect(result).toMatchObject({ repository, applied: false });
-        expect(result.labels[0]).toMatchObject(prune ? { name: "bug", action: "would-delete", issues: 0, pullRequests: 0 }
-          : { key: "under-review", action: "create" });
-        if (!prune) {
+        if (prune) expect(result.labels).toEqual(managedBug ? [] : [{ name: "bug", action: "would-delete", issues: 0, pullRequests: 0 }]);
+        else {
           expect(result.labels).toEqual(Object.entries(definitions.labels).map(([key, label]) => ({ key, name: label.name, action: "create" })));
         }
         expect(stderr.trim().split(/\r?\n/)).toEqual([
           `REQUEST repos/${repository}/labels?per_page=100&page=1`,
-          ...(prune ? [`REQUEST repos/${repository}/issues?state=all&labels=bug&per_page=100&page=1`] : []),
+          ...(prune && !managedBug ? [`REQUEST repos/${repository}/issues?state=all&labels=bug&per_page=100&page=1`] : []),
         ]);
       }
     }

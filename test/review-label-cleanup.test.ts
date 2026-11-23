@@ -1,10 +1,13 @@
 import { readFile } from "node:fs/promises";
-import definitions from "../labels/base.json";
+import definitions from "./fixtures/bootstrap-labels.json";
 import { describe, expect, it, vi } from "vitest";
-import { cleanupReviewLabel } from "../scripts/review-label-cleanup.mjs";
-import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
+import { cleanupReviewLabel as cleanup } from "../scripts/review-label-cleanup.mjs";
+import { automationMain as automateMain, runLabelAutomation as automate } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/repository";
+const cleanupReviewLabel = options => cleanup({ manifest: structuredClone(definitions), ...options });
+const runLabelAutomation = options => automate({ manifest: structuredClone(definitions), ...options });
+const automationMain = options => automateMain({ manifest: structuredClone(definitions), ...options });
 const name = definitions.labels["under-review"].name;
 const oldName = definitions.labels["under-review"].previousNames[0];
 const event = (merged = true, target = repository) => ({ action: "closed", number: 14, repository: { full_name: target },

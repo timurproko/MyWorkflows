@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import definitions from "../labels/base.json";
+import definitions from "./fixtures/bootstrap-labels.json";
 import { describe, expect, it, vi } from "vitest";
-import { labelMetadata, labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
-import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
+import { labelMetadata, labelsMain as cliMain, listLabels, loadBaseLabels, syncLabels as synchronize, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
+import { automationMain as automateMain, runLabelAutomation as automate } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/arbitrary-repository";
 const base = labelMetadata(definitions.labels["under-review"]);
@@ -11,6 +11,10 @@ const changesNeeded = labelMetadata(definitions.labels["review-changes-needed"])
 const palette = [base, approved, changesNeeded];
 const custom = { name: "custom", color: "abcdef", description: "keep me", default: false };
 const manifest = () => structuredClone(definitions);
+const syncLabels = options => synchronize({ manifest: manifest(), ...options });
+const labelsMain = (args, options) => cliMain(args, { manifest: manifest(), ...options });
+const runLabelAutomation = options => automate({ manifest: manifest(), ...options });
+const automationMain = options => automateMain({ manifest: manifest(), ...options });
 const creates = (repository: string) => palette.map(label => ["POST", `repos/${repository}/labels`, label]);
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app-secret", GH_TOKEN: "app-secret", ...extra });
@@ -51,13 +55,19 @@ describe("shared label repository identity validation", () => {
 describe("central base-label definitions", () => {
   it("loads the mutable published palette with all permanently stable keys and valid history/identities", async () => {
     const actual = await loadBaseLabels();
-    expect(actual).toEqual(manifest());
+    expect(actual).toEqual(JSON.parse(await readFile("labels/base.json", "utf8")));
     expect(Object.keys(actual.labels)).toEqual(["under-review", "review-approved", "review-changes-needed"]);
     for (const label of Object.values(actual.labels) as any[]) {
       expect(Array.isArray(label.previousNames)).toBe(true);
       expect(label.reference.id).toBeGreaterThan(0);
       expect(typeof label.reference.nodeId).toBe("string");
     }
+  });
+
+  it("uses the mutable published metadata by default without a test-fixture override", async () => {
+    const actual = await loadBaseLabels(), api = reads();
+    await synchronize({ repository, api, apply: true });
+    expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(Object.values(actual.labels).map(label => ["POST", `repos/${repository}/labels`, labelMetadata(label)]));
   });
 
   it.each([

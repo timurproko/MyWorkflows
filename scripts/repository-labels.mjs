@@ -165,11 +165,11 @@ export async function syncLabels({ repository, apply = false, api = labelApi, ma
     ...(conflicts.length ? { conflicts } : {}) };
 }
 
-export async function labelsMain(args, { api = labelApi } = {}) {
+export async function labelsMain(args, { api = labelApi, manifest } = {}) {
   const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" }, "prune-unused-defaults": { type: "boolean" } } });
   if (values["prune-unused-defaults"]) {
     const { pruneDefaultLabels } = await import("./prune-default-labels.mjs");
-    return pruneDefaultLabels({ repository: values.repo, apply: Boolean(values.apply), api });
+    return pruneDefaultLabels({ repository: values.repo, apply: Boolean(values.apply), api, manifest });
   }
-  return syncLabels({ repository: values.repo, apply: Boolean(values.apply), api });
+  return syncLabels({ repository: values.repo, apply: Boolean(values.apply), api, manifest });
 }
