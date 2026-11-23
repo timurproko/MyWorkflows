@@ -37,9 +37,9 @@ describe("delivery labels CLI", () => {
           : { key: "under-review", action: "create" });
         if (!prune) {
           expect(result.labels).toEqual([
-            { key: "under-review", name: "🤖 Under review", action: "create" },
+            { key: "under-review", name: "🤖 Review", action: "create" },
             { key: "review-approved", name: "🤖 Approved", action: "create" },
-            { key: "review-changes-needed", name: "🤖 Changes needed", action: "create" },
+            { key: "review-changes-needed", name: "🤖 Rework", action: "create" },
           ]);
         }
         expect(stderr.trim().split(/\r?\n/)).toEqual([
