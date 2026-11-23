@@ -183,9 +183,10 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Complete old cleanup before replacement. Use one owner per PR or retain the label until that owner's last
   local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
 - All three labels are advisory, never required checks or merge gates; absence is not approval. A retained
-  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes only `under-review`
-  current/historical assignments and preserves both verdict keys' current/historical records. No verdict is added.
-  Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or historical sweep. A lost runner
+  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes all three managed roles'
+  current/historical assignments, including both verdicts. No verdict is added; unrelated labels remain untouched.
+  A reopened PR has no robot review label until the next review sets one; removed assignments are not restored.
+  Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or automatic historical sweep. A lost runner
   may leave an open PR labeled until recovery or a person clears it. Crew integration is separate work in crew.
 - Consumer sync renames an existing previous-name definition with PATCH `new_name`, preserving assignments.
   When old and new both exist, keep the new definition, retain/report the old one and never delete automatically.
@@ -196,6 +197,14 @@ Do not run it or any live label apply/prune without separate named-repository au
   Missing rights warn independently of promotion/finalization or required checks. Manual dry runs stay read-only.
   Optional default pruning excludes managed current/historical names and needs separate explicit consent.
   Implementation approval never authorizes variables, permissions, pruning or live label writes.
+
+Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
+assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository
+authorization before `delivery labels-sweep --repo owner/name --apply`; never run it automatically or as part of
+implementation. It uses the signed-in credential, paginates PRs/assignments, checks current closure before each
+removal, skips open/reopened PRs and preserves unrelated labels and definitions. Local apply honors the environment
+`DELIVERY_LABELS_ENABLED=false`; read-only report mode remains available. Failures are not confirmed absence;
+earlier removals may already have completed. The final state-read/DELETE race is not atomic.
 
 See `docs/delivery-labels.md` in MyWorkflows for the complete manifest/API, transition and recovery contract.
 

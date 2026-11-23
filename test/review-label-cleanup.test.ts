@@ -10,12 +10,13 @@ const runLabelAutomation = options => automate({ manifest: structuredClone(defin
 const automationMain = options => automateMain({ manifest: structuredClone(definitions), ...options });
 const name = definitions.labels["under-review"].name;
 const oldName = definitions.labels["under-review"].previousNames[0];
+const managedNames = Object.values(definitions.labels).flatMap(label => [label.name, ...label.previousNames]);
 const event = (merged = true, target = repository) => ({ action: "closed", number: 14, repository: { full_name: target },
   pull_request: { number: 14, state: "closed", merged, base: { ref: "non-default-target", repo: { full_name: target } }, user: { login: "dependabot[bot]" } } });
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app", GH_TOKEN: "app", LABELS_OPERATION: "cleanup", ...extra });
 
-function fake({ target = repository, states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true, removableNames = [name, oldName] } = {}) {
+function fake({ target = repository, states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true, removableNames = managedNames } = {}) {
   let reads = 0, attemptedDelete = false;
   const applied = [...labels];
   const api = vi.fn(async (method: string, path: string) => {
@@ -82,39 +83,39 @@ describe("closed-PR advisory review-label cleanup", () => {
     { verdicts: ["🤖 Rework"] },
     { verdicts: ["🤖 Changes needed"] },
     { verdicts: ["🤖 Approved", "🤖 Rework", "🤖 Changes needed"] },
-  ])("preserves verdict record $verdicts on every closure path", async ({ verdicts }) => {
+  ])("removes verdict assignments $verdicts on every closure path", async ({ verdicts }) => {
     for (const merged of [true, false]) {
       for (const underReview of [true, false]) {
         for (const automated of [true, false]) {
-          const retained = [...verdicts, "keep-me"];
-          const { api, applied } = fake({ labels: [...(underReview ? [name] : []), ...retained] });
+          const removed = [...(underReview ? [name] : []), ...verdicts];
+          const { api, applied } = fake({ labels: [...removed, "keep-me"] });
           const cleanup = () => automated
             ? runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: undefined }), event: event(merged), api, report: vi.fn() })
             : cleanupReviewLabel({ repository, event: event(merged), api });
-          expect(await cleanup()).toEqual({ number: 14, disposition: underReview ? "removed" : "absent" });
-          expect(applied).toEqual(retained);
+          expect(await cleanup()).toEqual({ number: 14, disposition: "removed" });
+          expect(applied).toEqual(["keep-me"]);
           expect(await cleanup()).toEqual({ number: 14, disposition: "absent" });
-          expect(applied).toEqual(retained);
-          // No verdict removal/addition, repository-definition deletion or unrelated assignment change.
-          expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(underReview ? [
-            ["DELETE", `repos/${repository}/issues/14/labels/${encodeURIComponent(name)}`],
-          ] : []);
+          expect(applied).toEqual(["keep-me"]);
+          // Only managed assignments are removed; no additions or definition/unrelated writes.
+          expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(removed.map(label => [
+            "DELETE", `repos/${repository}/issues/14/labels/${encodeURIComponent(label)}`,
+          ]));
         }
       }
     }
   });
 
-  it.each([[oldName], [name, oldName]])("clears current and legacy review names together without touching any verdict", async (...reviewNames) => {
+  it.each([[oldName], [name, oldName]])("clears current and legacy review names together with both verdicts", async (...reviewNames) => {
     const verdicts = ["🤖 Approved", "🤖 Rework", "🤖 Changes needed"];
     for (const merged of [true, false]) {
       const { api, applied } = fake({ labels: [...reviewNames, ...verdicts] });
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("removed");
-      expect(applied).toEqual(verdicts);
+      expect(applied).toEqual([]);
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("absent");
     }
   });
 
-  it("resolves arbitrary future current and historical names by key and preserves historical verdicts", async () => {
+  it("removes arbitrary future current and historical names for every key on both closure paths", async () => {
     const reviewNames = ["Reading", "Earlier reading", "Oldest reading"];
     const verdicts = ["Good", "Previously good", "Revise", "Previously revise"];
     const manifest = { version: 1, labels: {
@@ -122,9 +123,14 @@ describe("closed-PR advisory review-label cleanup", () => {
       "review-approved": { name: verdicts[0], previousNames: [verdicts[1]], color: "1a7f37", description: "" },
       "review-changes-needed": { name: verdicts[2], previousNames: [verdicts[3]], color: "9a6700", description: "" },
     } };
-    const { api, applied } = fake({ labels: [...reviewNames, ...verdicts, "other"], removableNames: reviewNames });
-    await cleanupReviewLabel({ repository, event: event(), api, manifest });
-    expect(applied).toEqual([...verdicts, "other"]);
+    for (const merged of [true, false]) {
+      const removed = [...reviewNames, ...verdicts];
+      const { api, applied } = fake({ labels: [...removed, "other"], removableNames: removed });
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api, manifest })).disposition).toBe("removed");
+      expect(applied).toEqual(["other"]);
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api, manifest })).disposition).toBe("absent");
+      expect(api.mock.calls.filter(([method]) => method === "DELETE")).toHaveLength(removed.length);
+    }
     const reopened = fake({ labels: [name, oldName], states: ["closed", "closed", "open"] });
     expect((await cleanupReviewLabel({ repository, event: event(), api: reopened.api })).disposition).toBe("reopened");
     expect(reopened.applied).toEqual([oldName]);
@@ -166,9 +172,53 @@ describe("closed-PR advisory review-label cleanup", () => {
         return source.api(method, path);
       });
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe(reopened ? "reopened" : "removed");
-      expect(source.applied).toEqual([...(reopened ? [name] : []), "🤖 Approved", "🤖 Rework"]);
-      expect(api.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => decodeURIComponent(path.split("/").at(-1)!))).toEqual(reopened ? [oldName] : [oldName, name]);
+      expect(source.applied).toEqual(reopened ? [name, "🤖 Approved", "🤖 Rework"] : []);
+      expect(api.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => decodeURIComponent(path.split("/").at(-1)!)))
+        .toEqual(reopened ? [oldName] : [oldName, "🤖 Approved", "🤖 Rework", name]);
     }
+  });
+
+  it.each(["under-review", "review-approved", "review-changes-needed"])("retains rename, reopen, 404 and churn safeguards for role %s", async key => {
+    const manifest = structuredClone(definitions);
+    manifest.labels[key].previousNames = ["Earlier role name"];
+    const current = manifest.labels[key].name;
+    const previous = manifest.labels[key].previousNames[0];
+    for (const status of [0, 404]) {
+      const source = fake({ labels: [previous, "keep-me"], removableNames: [current, previous] });
+      const api = vi.fn(async (method, path) => {
+        if (method === "DELETE" && path.endsWith(encodeURIComponent(previous))) {
+          source.applied[0] = current;
+          if (status) throw Object.assign(new Error("renamed"), { status });
+          return [];
+        }
+        return source.api(method, path);
+      });
+      expect((await cleanupReviewLabel({ repository, event: event(), api, manifest })).disposition).toBe("removed");
+      expect(source.applied).toEqual(["keep-me"]);
+    }
+    const reopened = fake({ labels: [previous, current, "keep-me"], removableNames: [current, previous], states: ["closed", "closed", "open"] });
+    expect((await cleanupReviewLabel({ repository, event: event(), api: reopened.api, manifest })).disposition).toBe("reopened");
+    expect(reopened.applied).toEqual([current, "keep-me"]);
+    const inaccessible = fake({ labels: [current], deleteStatus: 404, inaccessibleAfterDelete: true });
+    await expect(cleanupReviewLabel({ repository, event: event(), api: inaccessible.api, manifest })).rejects.toMatchObject({ status: 404 });
+    const changing = fake({ labels: [previous], removableNames: [current, previous] });
+    const churn = vi.fn(async (method, path) => {
+      if (method === "DELETE") {
+        changing.applied[0] = changing.applied[0] === current ? previous : current;
+        throw Object.assign(new Error("renamed again"), { status: 404 });
+      }
+      return changing.api(method, path);
+    });
+    await expect(cleanupReviewLabel({ repository, event: event(), api: churn, manifest })).rejects.toThrow("kept changing");
+    expect(churn.mock.calls.filter(([method]) => method === "DELETE").length).toBeLessThanOrEqual(10);
+  });
+
+  it("refuses a manifest missing either verdict role rather than leaving unknown assignments", async () => {
+    const manifest = structuredClone(definitions);
+    delete manifest.labels["review-approved"];
+    const api = vi.fn();
+    await expect(cleanupReviewLabel({ repository, event: event(), api, manifest })).rejects.toThrow("all three");
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("confirms access and absence before treating DELETE 404 as idempotent", async () => {
@@ -228,7 +278,7 @@ describe("closed-PR advisory review-label cleanup", () => {
     const source = fake();
     const report = vi.fn();
     expect(await automationMain({ environment: environment(), event: event(), api: source.api, report })).toBe(0);
-    expect(report).toHaveBeenCalledWith("Review-in-progress closed-PR cleanup: removed.");
+    expect(report).toHaveBeenCalledWith("Managed review-label closed-PR cleanup: removed.");
     const denied = fake({ deleteStatus: 403 });
     expect(await automationMain({ environment: environment(), event: event(), api: denied.api, report })).toBe(1);
     expect(report).toHaveBeenCalledWith(expect.stringContaining("::warning::Delivery label automation failed (HTTP 403)"));
