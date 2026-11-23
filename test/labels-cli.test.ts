@@ -35,6 +35,13 @@ describe("delivery labels CLI", () => {
         expect(result).toMatchObject({ repository, applied: false });
         expect(result.labels[0]).toMatchObject(prune ? { name: "bug", action: "would-delete", issues: 0, pullRequests: 0 }
           : { key: "under-review", action: "create" });
+        if (!prune) {
+          expect(result.labels).toEqual([
+            { key: "under-review", name: "🤖 Under review", action: "create" },
+            { key: "review-approved", name: "🤖 Approved", action: "create" },
+            { key: "review-changes-needed", name: "🤖 Changes needed", action: "create" },
+          ]);
+        }
         expect(stderr.trim().split(/\r?\n/)).toEqual([
           `REQUEST repos/${repository}/labels?per_page=100&page=1`,
           ...(prune ? [`REQUEST repos/${repository}/issues?state=all&labels=bug&per_page=100&page=1`] : []),
