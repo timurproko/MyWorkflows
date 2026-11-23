@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest } from "../scripts/repository-labels.mjs";
+import { labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
 import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/arbitrary-repository";
@@ -13,6 +13,34 @@ const reads = (labels: any[] = []) => vi.fn(async (method: string, path: string,
   if (method !== "GET") return {};
   const page = Number(new URL(`https://api.github.com/${path}`).searchParams.get("page"));
   return labels.slice((page - 1) * 100, page * 100);
+});
+
+describe("shared label repository identity validation", () => {
+  it.each([
+    "owner/repository", "Owner-9/repo.name", "owner/.hidden", "owner/.github", "owner/...",
+    "owner/..hidden", "owner/trailing.", "owner/_", "owner/-", "owner/a..b", "owner/repo.git",
+    "1/a", "a-b-c/a_b-1.2", `${"a".repeat(39)}/${"r".repeat(100)}`, `owner/${".".repeat(100)}`,
+  ])("accepts a GitHub identity unchanged: %s", repository => {
+    expect(validateRepository(repository)).toBe(repository);
+  });
+
+  it.each([
+    undefined, null, 12, {}, ["owner/repo"], "", "owner", "/repo", "owner/", "owner/repo/extra", "owner//repo",
+    "https://github.com/owner/repo", "git@github.com:owner/repo.git", "owner/.", "owner/..", "../escape",
+    "-owner/repo", "owner-/repo", "ow--ner/repo", "ow_ner/repo", "ow.ner/repo", `${"a".repeat(40)}/repo`,
+    `owner/${"r".repeat(101)}`, " owner/repo", "owner/repo ", "owner/re po", "owner/repo\n", "owner/repo\r\n",
+    "owner/repo\t", "owner/repo\u2028", "owner/repo\0", "owner/répo", "øwner/repo", "owner/%2ehidden",
+    "owner/repo?query", "owner/repo#fragment", "owner/repo\\extra",
+  ])("rejects malformed identities before API access: %j", async repository => {
+    expect(() => validateRepository(repository)).toThrow("owner/name");
+    const api = reads();
+    await expect(syncLabels({ repository, api })).rejects.toThrow("owner/name");
+    if (typeof repository === "string") {
+      await expect(labelsMain([`--repo=${repository}`], { api })).rejects.toThrow("owner/name");
+      await expect(labelsMain([`--repo=${repository}`, "--prune-unused-defaults"], { api })).rejects.toThrow("owner/name");
+    }
+    expect(api).not.toHaveBeenCalled();
+  });
 });
 
 describe("central base-label definitions", () => {
@@ -97,6 +125,22 @@ describe("central base-label definitions", () => {
 });
 
 describe("default-on label automation with explicit opt-out", () => {
+  it.each(["owner/repo.name", "owner/.hidden"])("syncs the exact dotted repository from workflow context: %s", async repository => {
+    const api = reads([custom]);
+    const result = await runLabelAutomation({ environment: environment({ GITHUB_REPOSITORY: repository }), api, report: vi.fn() });
+    expect(result).toMatchObject({ repository, applied: true, preserved: ["custom"] });
+    expect(api.mock.calls).toEqual([
+      ["GET", `repos/${repository}/labels?per_page=100&page=1`],
+      ["POST", `repos/${repository}/labels`, base],
+    ]);
+  });
+
+  it.each(["owner/.", "owner/..", "owner/repo/extra", "https://github.com/owner/repo"])("rejects malformed workflow repository context: %s", async repository => {
+    const api = reads();
+    await expect(runLabelAutomation({ environment: environment({ GITHUB_REPOSITORY: repository }), api })).rejects.toThrow("owner/name");
+    expect(api).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, "", "true", "TRUE", "1", "no", " false "])("syncs by default unless explicitly opted out: %s", async enabled => {
     const api = reads();
     const result = await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled }), api, report: vi.fn() });

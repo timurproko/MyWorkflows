@@ -5,18 +5,18 @@ import { automationMain, runLabelAutomation } from "../scripts/run-label-automat
 
 const repository = "owner/repository";
 const name = "🤖 Under review";
-const event = (merged = true) => ({ action: "closed", number: 14, repository: { full_name: repository },
-  pull_request: { number: 14, state: "closed", merged, base: { ref: "non-default-target", repo: { full_name: repository } }, user: { login: "dependabot[bot]" } } });
+const event = (merged = true, target = repository) => ({ action: "closed", number: 14, repository: { full_name: target },
+  pull_request: { number: 14, state: "closed", merged, base: { ref: "non-default-target", repo: { full_name: target } }, user: { login: "dependabot[bot]" } } });
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
   DELIVERY_LABELS_ENABLED: "true", LABELS_APP_TOKEN: "app", GH_TOKEN: "app", LABELS_OPERATION: "cleanup", ...extra });
 
-function fake({ states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true } = {}) {
+function fake({ target = repository, states = ["closed"], labels = [name, "keep-me"], deleteStatus = 0, inaccessibleAfterDelete = false, removeOn404 = true } = {}) {
   let reads = 0, attemptedDelete = false;
   const applied = [...labels];
   const api = vi.fn(async (method: string, path: string) => {
-    if (method === "GET" && path === `repos/${repository}/pulls/14`) {
+    if (method === "GET" && path === `repos/${target}/pulls/14`) {
       if (attemptedDelete && inaccessibleAfterDelete) throw Object.assign(new Error("not found"), { status: 404 });
-      return { number: 14, state: states[Math.min(reads++, states.length - 1)], base: { repo: { full_name: repository } } };
+      return { number: 14, state: states[Math.min(reads++, states.length - 1)], base: { repo: { full_name: target } } };
     }
     if (method === "GET" && path.includes("/issues/14/labels?")) {
       const page = Number(new URL(`https://api.github.com/${path}`).searchParams.get("page"));
@@ -24,7 +24,7 @@ function fake({ states = ["closed"], labels = [name, "keep-me"], deleteStatus = 
     }
     if (method === "DELETE") {
       attemptedDelete = true;
-      expect(path).toBe(`repos/${repository}/issues/14/labels/%F0%9F%A4%96%20Under%20review`);
+      expect(path).toBe(`repos/${target}/issues/14/labels/%F0%9F%A4%96%20Under%20review`);
       if (!deleteStatus || (deleteStatus === 404 && removeOn404)) {
         const index = applied.indexOf(name);
         if (index >= 0) applied.splice(index, 1);
@@ -38,6 +38,31 @@ function fake({ states = ["closed"], labels = [name, "keep-me"], deleteStatus = 
 }
 
 describe("closed-PR advisory review-label cleanup", () => {
+  it.each(["owner/repo.name", "owner/.hidden"])("cleans dotted repositories directly and through the workflow runner: %s", async repository => {
+    for (const merged of [true, false]) {
+      for (const automated of [false, true]) {
+        const { api, applied } = fake({ target: repository });
+        const cleanup = () => automated
+          ? runLabelAutomation({ environment: environment({ GITHUB_REPOSITORY: repository }), event: event(merged, repository), api, report: vi.fn() })
+          : cleanupReviewLabel({ repository, event: event(merged, repository), api });
+        expect(await cleanup()).toEqual({ number: 14, disposition: "removed" });
+        expect(await cleanup()).toEqual({ number: 14, disposition: "absent" });
+        expect(applied).toEqual(["keep-me"]);
+        expect(api.mock.calls.every(([, path]) => path.startsWith(`repos/${repository}/`))).toBe(true);
+        expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([
+          ["DELETE", `repos/${repository}/issues/14/labels/%F0%9F%A4%96%20Under%20review`],
+        ]);
+      }
+    }
+  });
+
+  it.each(["owner/.", "owner/..", "owner/repo/extra", "https://github.com/owner/repo"])("rejects malformed cleanup repository context before requests: %s", async repository => {
+    const api = vi.fn();
+    await expect(cleanupReviewLabel({ repository, event: event(true, repository), api })).rejects.toThrow("owner/name");
+    await expect(runLabelAutomation({ environment: environment({ GITHUB_REPOSITORY: repository }), event: event(true, repository), api })).rejects.toThrow("owner/name");
+    expect(api).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])("clears merged=%s closures including non-default targets and any author", async merged => {
     const { api, applied } = fake();
     expect(await cleanupReviewLabel({ repository, event: event(merged), api })).toEqual({ number: 14, disposition: "removed" });

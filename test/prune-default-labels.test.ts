@@ -28,6 +28,17 @@ function fake(labels = defaults(), usage: Record<string, any[]> = {}, fresh: Rec
 }
 
 describe("explicit default-label pruning", () => {
+  it.each(["owner/repo.name", "owner/.hidden"])("reports defaults and usage for dotted repository identities without writes: %s", async repository => {
+    const api = fake([defaults()[1]], { bug: [{ number: 1, state: "closed" }, { number: 2, pull_request: {} }] });
+    const result = await labelsMain([`--repo=${repository}`, "--prune-unused-defaults"], { api });
+    expect(result).toMatchObject({ repository, applied: false,
+      labels: [{ name: "bug", issues: 1, pullRequests: 1, action: "retained-used" }] });
+    expect(api.mock.calls).toEqual([
+      ["GET", `repos/${repository}/labels?per_page=100&page=1`],
+      ["GET", `repos/${repository}/issues?state=all&labels=bug&per_page=100&page=1`],
+    ]);
+  });
+
   it("reports all ten unused unmodified defaults, without any write", async () => {
     const api = fake();
     const result = await labelsMain(["--repo", repository, "--prune-unused-defaults"], { api });
