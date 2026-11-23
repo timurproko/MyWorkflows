@@ -10,7 +10,9 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     throw new Error("review-label cleanup requires a matching closed pull-request event");
   }
   manifest = validateManifest(manifest === undefined ? await loadBaseLabels() : manifest);
-  const names = labelNames(manifest.labels["under-review"]);
+  const keys = ["under-review", "review-approved", "review-changes-needed"];
+  if (keys.some(key => !manifest.labels[key])) throw new Error("review cleanup requires all three managed review roles");
+  const names = keys.flatMap(key => labelNames(manifest.labels[key]));
   const prefix = `repos/${repository}`;
   async function currentState() {
     const pull = await api("GET", `${prefix}/pulls/${number}`);
@@ -34,7 +36,7 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
   if (await currentState() === "open") return { number, disposition: "reopened" };
   let removed = false;
   // Sync can rename an assigned definition while this independent job is removing it.
-  // Rescan the whole role after every removal/404, not just the now-missing old spelling.
+  // Rescan every managed role after removals/404s, not just the now-missing old spelling.
   for (let pass = 0; pass <= names.length; pass++) {
     const assigned = await assignedReviewNames();
     if (!assigned.length) return { number, disposition: removed ? "removed" : "absent" };

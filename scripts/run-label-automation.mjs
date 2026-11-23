@@ -25,7 +25,7 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   if (operation === "cleanup") {
     event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));
     const result = await cleanupReviewLabel({ repository, event, api, manifest });
-    report(`Review-in-progress closed-PR cleanup: ${result.disposition}.`);
+    report(`Managed review-label closed-PR cleanup: ${result.disposition}.`);
     return result;
   }
   const result = await syncLabels({ repository, apply: !dryRun, api, manifest });

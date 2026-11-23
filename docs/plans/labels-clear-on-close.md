@@ -1,6 +1,6 @@
 # Clear managed review labels on closure
 
-Status: proposed; awaiting maintainer approval before implementation.
+Status: approved for implementation; outcomes tracked below.
 
 ## Policy and scope
 
@@ -13,6 +13,8 @@ No live label writes, label sweep (including report mode), pruning, variable cha
 ## Implementation outcomes
 
 ### 1. Closed-event cleanup removes all managed review assignments while preserving its safety and isolation guards
+
+Status: implemented; 49 targeted cleanup regressions pass, including all-role rename/reopen/404/churn guards.
 
 - Expand `scripts/review-label-cleanup.mjs` from the in-progress role to all three stable keys, current and historical names, without hard-coded display names or a blanket label-set replacement.
 - Retain repository/event/PR identity and current-state validation, paginated assignment reads, reopen checks before every deletion, confirmed-access and exact-absence handling for DELETE 404s, rescanning all managed names after removals/404s, bounded retries and final confirmed absence. Concurrent renames/churn must not become false success.
