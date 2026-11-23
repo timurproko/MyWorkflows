@@ -7,7 +7,10 @@ const folded = name => name.normalize("NFC").toLowerCase();
 const text = (value, max) => typeof value === "string" && [...value].length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
 
 export function validateRepository(repository) {
-  if (typeof repository !== "string" || !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(repository)) {
+  const parts = typeof repository === "string" ? repository.split("/") : [];
+  const [owner = "", name = ""] = parts;
+  if (parts.length !== 2 || owner.length > 39 || !/^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/.test(owner)
+    || name.length > 100 || !/^[A-Za-z0-9_.-]+$/.test(name) || name === "." || name === "..") {
     throw new Error("name one repository as owner/name");
   }
   return repository;

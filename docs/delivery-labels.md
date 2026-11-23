@@ -32,7 +32,9 @@ Local diagnostics/manual application use the ordinary signed-in `gh` credential 
 
 ## Local report/apply and optional pruning
 
-The `delivery labels` command requires `--repo owner/name` explicitly and emits JSON:
+The `delivery labels` command requires `--repo owner/name` explicitly and emits JSON. Both `--repo owner/name` and `--repo=owner/name` are supported. The owner follows GitHub login rules: 1–39 ASCII letters/digits or single separating hyphens, with no leading/trailing/consecutive hyphens. The repository is 1–100 ASCII letters, digits, hyphens, underscores or dots, except exactly `.` or `..`. Dotted and leading-dot names such as `octocat/repo.name` and `octocat/.hidden` are accepted unchanged, as are three or more dots alone. Missing/extra slash segments, whitespace, URL forms, percent escapes and query/fragment syntax are rejected; inputs are not trimmed or normalized and `.git` is not stripped.
+
+Label reports, prune reports/usage, automatic base-label sync and direct/closed-event review-label cleanup all use the same `validateRepository` function in `scripts/repository-labels.mjs`. The CLI's argument parser imposes no additional leading-character restriction.
 
 | Flags after `delivery labels --repo owner/name` | Behavior |
 | --- | --- |
@@ -50,6 +52,25 @@ The command paginates all-state issue/PR usage, including closed and merged work
 **Deleting a label deletes its assignments everywhere.** GitHub has no atomic delete-if-unused operation, so a usage change between the final read and DELETE remains possible. Obtain separate consent for the repository, inspect a fresh report, and use a quiet maintenance window. Keeping all defaults is the only zero-deletion-risk policy and remains the automatic behavior.
 
 The [approved plan's historical audit](plans/base-labels.md#5-defaults-preserve-automatically-prune-only-on-explicit-request) found 51 unused candidates, but authorized none. In particular, a1's used `bug` and `enhancement` classifications must remain. That snapshot is not a substitute for a fresh report.
+
+## Repository identity audit and follow-up candidates
+
+The original label validator required each segment to start with a letter, digit, underscore or hyphen, so it rejected all leading-dot repositories while accepting internal/trailing dots. It also accepted malformed owners and overlong names. Fixing the shared label validator corrects all label paths without changing workflow events, permissions, opt-out behavior or write authorization.
+
+The other validators already accept leading dots. They are deliberately **unchanged** here: tightening their owner/length/dot-segment rules could reject identities that currently work and is a separate follow-up candidate, not part of the label fix.
+
+| Checked paths | Result |
+| --- | --- |
+| `bin/delivery.mjs`, `repository-labels.mjs`, `prune-default-labels.mjs` | The shared validator handles CLI reports/pruning, label listing and usage; dotted-name regressions exercise the real CLI with stubbed subprocesses. |
+| `run-label-automation.mjs`, `review-label-cleanup.mjs`, reusable `label-sync` and `review-label-cleanup` jobs | Both jobs inherit the fixed validator; fake-API regressions cover sync and merged/unmerged closed-event cleanup, preservation and idempotency. No workflow edit is needed. |
+| `openspec-archive-github.mjs`, `openspec-archive-publication.mjs`, `publish-openspec-finalization.mjs` | Reader/publisher and promotion/finalization identity regexes already accept leading dots; broader validation is a follow-up candidate only. |
+| `openspec-delivery-policy.mjs`, `openspec-association-repair.mjs` | Manifest/repair identity regexes already accept leading dots; broader validation is a follow-up candidate only. |
+| `delivery-check.mjs`, `refresh-ready-pull-requests.mjs`, `repository-protection.mjs`, protect CLI parsing | Existing regexes accept leading dots; broader validation is a follow-up candidate only. |
+| `reconcile-merged-branch.mjs`, `execute-merged-branch-cleanup.mjs`, `merged-branch-cleanup.mjs`, `ready-pull-request-refresh.mjs`, `plain-delivery.mjs`, `openspec-finalization-publication.mjs` | Repository identities are interpolated or compared exactly, without a leading-dot rejection. Branch-ref restrictions are unrelated and unchanged. |
+| `bootstrap.mjs`, `managed-copy.mjs`, `templates/workflow-bootstrap.mjs`, install/worktree tooling | Bootstrap uses a fixed trusted tooling URL; local tooling uses Git metadata/paths, not a restrictive consumer owner/name parser. |
+| Reusable workflow, caller/self-delivery templates and actions | Repository context is inherited or the trusted tooling repository is fixed; no inline owner/name parser rejects leading dots. |
+
+Script basenames in the table refer to `scripts/` unless another directory is specified. This audit performs no live label pruning, label writes, permission/protection changes or consumer dispatches.
 
 ## Direct review-runner contract (crew integration is separate)
 
