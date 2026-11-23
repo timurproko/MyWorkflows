@@ -1,5 +1,7 @@
 # Reference-driven review labels and safe renames
 
+> Historical plan: its in-progress-only closed cleanup and verdict persistence are superseded by [labels-clear-on-close](labels-clear-on-close.md). All three managed roles and every historical alias are now removed on merged/unmerged closure; historical recovery is a separately authorized report-first manual sweep, never automatic. See [the current runner contract](../delivery-labels.md); historical evidence below is retained.
+
 ## Proposal
 
 Shorten the three shared robot labels to Review, Approved and Rework, and make managed labels on the GitHub Labels page of `timurproko/MyWorkflows` the editable reference for future names, colours and descriptions. Publish accepted reference changes through a protected-branch pull request; consumers keep converging through the existing default-on delivery sync without losing assignments.

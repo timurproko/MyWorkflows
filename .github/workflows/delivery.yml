@@ -228,7 +228,7 @@ jobs:
         run: node scripts/run-label-automation.mjs
 
   review-label-cleanup:
-    name: Clear the closed pull request's review label
+    name: Clear the closed pull request's managed review labels
     if: github.event_name == 'pull_request_target' && github.event.action == 'closed'
     # This advisory fallback must never fail promotion/finalization or become a required merge gate.
     continue-on-error: true
@@ -260,7 +260,7 @@ jobs:
           private-key: ${{ secrets.app_private_key }}
           permission-pull-requests: write
 
-      - name: Clear current and historical review-in-progress names or report opt-out
+      - name: Clear all current and historical managed review names or report opt-out
         env:
           GH_TOKEN: ${{ steps.cleanup-app.outputs.token }}
           LABELS_APP_TOKEN: ${{ steps.cleanup-app.outputs.token }}

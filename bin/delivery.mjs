@@ -30,6 +30,8 @@ const USAGE = `Usage: delivery <command>
   labels --repo <owner/name> [--apply]      Report the central base-label diff; --apply explicitly upserts it
                                             --prune-unused-defaults reports only unused, unmodified GitHub
                                             defaults; with --apply deletes them instead of syncing labels
+  labels-sweep --repo <owner/name> [--apply] Report managed assignments on closed PRs; --apply explicitly
+                                            removes them after fresh closure checks; never runs automatically
   labels-reference [--apply]                Report live reference edits; --apply publishes a protected PR,
                                             never writes label definitions or the default branch
   instructions [--apply]                    Report agent instruction files that differ from the shared template;
@@ -112,6 +114,9 @@ try {
   } else if (command === "labels") {
     const { labelsMain } = await import("../scripts/repository-labels.mjs");
     console.log(JSON.stringify(await labelsMain(args), null, 2));
+  } else if (command === "labels-sweep") {
+    const { sweepMain } = await import("../scripts/review-label-sweep.mjs");
+    console.log(JSON.stringify(await sweepMain(args), null, 2));
   } else if (command === "labels-reference") {
     const { referenceMain } = await import("../scripts/reference-labels.mjs");
     console.log(JSON.stringify(await referenceMain(args), null, 2));
