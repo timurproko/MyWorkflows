@@ -36,17 +36,22 @@ optional override described below.
 ## Base labels and agent review
 
 `labels/base.json` centrally defines the base palette, starting with `🤖 Under review`.
-The existing Delivery workflow syncs definitions and removes that PR assignment on close/merge, but both jobs
-are **disabled by default**: only the maintainer setting the consumer's `DELIVERY_LABELS_ENABLED` variable to
-exactly `true` enables writes. No variable or label is changed by adopting this code alone.
+The existing Delivery workflow syncs definitions and removes that PR assignment on close/merge; both jobs
+are **enabled by default**, with no per-repository setup. The consumer's Actions variable
+`DELIVERY_LABELS_ENABLED=false` opts out of both automatic writers (case-insensitive, without whitespace
+trimming). Unset, empty, `true` and any other value remain enabled. No variable is set automatically.
 
 Synchronization happens on each consumer's next delivery event, including after definition changes; idle
-repositories wait. Defaults and custom labels are never deleted automatically. Optional pruning of unused,
+repositories wait. Callers tracking `main` need no edit; version-pinned callers must update both the workflow
+reference and matching `tools_ref` to a revision containing this policy. Defaults and custom labels are never
+deleted automatically. Manual dry runs stay read-only even when opted out. Optional pruning of unused,
 unmodified GitHub defaults requires a separate explicit command and consent.
 
 The agent-review runner adds/removes Under review directly with its signed-in credential; crew integration is a
 separate task. The label is advisory, never a merge gate. Existing App Pull requests write permission suffices;
-no added Issues grant or caller change is needed. See [enablement, permissions and the exact review contract](docs/delivery-labels.md).
+no added Issues grant or caller permission change is needed. Label jobs are isolated from promotion,
+finalization and required checks; missing App rights produce visible warnings, not delivery failures.
+See [opt-out, version pins, permissions and the exact review contract](docs/delivery-labels.md).
 
 ## Local setup, once per machine
 
@@ -181,5 +186,5 @@ automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
 shared skill, local worktree cleanup and the machine bootstrap.
 A repository without OpenSpec gets the same flow: its pull requests leave out the Automation section.
-Base-label sync and closed-PR review-label cleanup are available behind the default-disabled rollout variable;
+Base-label sync and closed-PR review-label cleanup are enabled by default with an explicit opt-out;
 review-runner hooks in crew are separate work, not implemented here.

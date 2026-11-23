@@ -13,8 +13,9 @@ export async function runLabelAutomation({ environment = process.env, api = labe
     throw new Error("invalid internal label operation for this event");
   }
   const dryRun = operation === "sync" && environment.GITHUB_EVENT_NAME === "workflow_dispatch" && environment.LABELS_DRY_RUN === "true";
-  if (environment.DELIVERY_LABELS_ENABLED !== "true" && !dryRun) {
-    report("Delivery labels are disabled; pending maintainer enablement of DELIVERY_LABELS_ENABLED=true. Nothing was changed.");
+  // Match Actions' case-insensitive string comparison; do not trim whitespace.
+  if (environment.DELIVERY_LABELS_ENABLED?.toLowerCase() === "false" && !dryRun) {
+    report("Delivery labels are disabled by explicit DELIVERY_LABELS_ENABLED=false opt-out. Nothing was changed.");
     return { disposition: "disabled" };
   }
   const repository = validateRepository(environment.GITHUB_REPOSITORY);

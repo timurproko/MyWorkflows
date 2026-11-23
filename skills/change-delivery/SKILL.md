@@ -143,10 +143,13 @@ when every outcome is ticked and the body is valid, and there is nothing to fina
 
 ### Final agent review labels
 
-Where the maintainer has enabled delivery labels and synced the base palette, whoever runs the agent review
-owns the `under-review` entry in the shared `labels/base.json` (GitHub name `🤖 Under review`). If rollout is
-not enabled, do not create or change labels. Use the review runner's signed-in credential, not the delivery App
-private key, and plain PR add-label/remove-label operations; no lease, heartbeat or dispatch protocol exists.
+Delivery labels are enabled by default: the next forwarded delivery event syncs the base palette without
+per-repository setup. The calling repository's `DELIVERY_LABELS_ENABLED=false` is the explicit opt-out for both
+automatic writers (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value
+remain enabled. Do not create or change review labels for an opted-out repository. Once the base palette is
+available, whoever runs the agent review owns the `under-review` entry in the shared `labels/base.json`
+(GitHub name `🤖 Under review`). Use the review runner's signed-in credential, not the delivery App private
+key, and plain PR add-label/remove-label operations; no lease, heartbeat or dispatch protocol exists.
 
 - Add the label when the review starts, before launching the reviewer, even if the PR is draft or CI is pending.
 - Remove it on either verdict, `APPROVE` or `CHANGES NEEDED`, and on failed launch/report, stop, finish, observed
@@ -155,11 +158,17 @@ private key, and plain PR add-label/remove-label operations; no lease, heartbeat
 - Complete old cleanup before replacing a reviewer. Use one owner per PR, or retain the label until that owner's
   last local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
 - The label is advisory: never make it a required check or merge gate, and never interpret absence as approval.
-  The shared workflow clears it on successfully processed closed/merged PR events after enablement. It does not
+  Unless opted out, the shared workflow clears it on successfully processed closed/merged PR events. It does not
   observe crew reports, guarantee timed crash expiry, or sweep historical PRs. A lost runner leaves an open PR
   labeled until existing recovery or a person clears it. Crew hooks are a separate integration task.
-- Rollout enablement and optional default-label pruning are separate maintainer decisions. Implementation
-  approval does not authorize setting variables, applying permissions, pruning or other live label writes.
+- Callers tracking `main` need no edit; idle repositories wait for their next delivery event. Version-pinned
+  callers must update both the workflow reference and matching `tools_ref` to a revision containing this policy;
+  a workflow pin alone leaves scripts on the existing `tools_ref` default of `main` unless explicitly aligned.
+- The isolated label jobs use existing App Pull requests write permission; missing rights produce visible
+  warnings, not promotion/finalization or required-check failures. Manual dry runs stay read-only even when
+  opted out. Sync never deletes labels; optional default-label pruning remains a separate explicit manual
+  command and maintainer decision. Implementation approval does not authorize setting variables, applying
+  permissions, pruning or other live label writes.
 
 ## 6. Merge
 

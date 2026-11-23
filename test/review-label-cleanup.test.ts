@@ -97,11 +97,29 @@ describe("closed-PR advisory review-label cleanup", () => {
     await expect(cleanupReviewLabel({ repository, event: event(), api: (method, path) => path.includes("labels?") ? Promise.resolve(null) : current.api(method, path) })).rejects.toThrow("listing");
   });
 
-  it("keeps cleanup disabled without reading event/API or minting a writer", async () => {
+  it.each([undefined, "", "true", "TRUE", "1", "no", " false "])("cleans up by default unless explicitly opted out: %s", async enabled => {
+    const { api, applied } = fake();
+    expect(await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled }), event: event(), api, report: vi.fn() })).toEqual({ number: 14, disposition: "removed" });
+    expect(applied).toEqual(["keep-me"]);
+  });
+
+  it.each(["false", "False", "FALSE"])("opts out before reading event/API or requiring a writer: %s", async enabled => {
     const api = vi.fn();
-    expect(await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: "", LABELS_APP_TOKEN: "", GH_TOKEN: "" }), api, report: vi.fn() })).toEqual({ disposition: "disabled" });
+    const report = vi.fn();
+    expect(await runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: enabled, LABELS_APP_TOKEN: "", GH_TOKEN: "" }), api, report })).toEqual({ disposition: "disabled" });
     expect(api).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("explicit DELIVERY_LABELS_ENABLED=false opt-out"));
+  });
+
+  it("rejects dispatch cleanup and default-on cleanup without the separate App writer", async () => {
+    const api = vi.fn();
     await expect(runLabelAutomation({ environment: environment({ GITHUB_EVENT_NAME: "workflow_dispatch" }), api })).rejects.toThrow("invalid internal");
+    for (const extra of [{ LABELS_APP_TOKEN: "", GH_TOKEN: "read-only" }, { GH_TOKEN: "read-only" }]) {
+      const report = vi.fn();
+      expect(await automationMain({ environment: environment({ DELIVERY_LABELS_ENABLED: undefined, ...extra }), event: event(), api, report })).toBe(1);
+      expect(report).toHaveBeenCalledWith(expect.stringContaining("::warning::"));
+    }
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("runs enabled cleanup and emits a visible nonblocking warning on failures", async () => {
@@ -119,7 +137,9 @@ describe("closed-PR advisory review-label cleanup", () => {
     const cleanup = workflow.slice(workflow.indexOf("\n  review-label-cleanup:"));
     expect(cleanup).toContain("github.event_name == 'pull_request_target' && github.event.action == 'closed'");
     expect(cleanup).toContain("continue-on-error: true");
-    expect(cleanup).toContain("vars.DELIVERY_LABELS_ENABLED == 'true'");
+    expect(cleanup).toContain("if: vars.DELIVERY_LABELS_ENABLED != 'false'\n");
+    expect(cleanup).toMatch(/\n    continue-on-error: true\n/);
+    expect(cleanup).not.toContain("vars.DELIVERY_LABELS_ENABLED == 'true'");
     expect(cleanup).toContain("permission-pull-requests: write");
     expect(cleanup).toContain("ref: ${{ inputs.tools_ref }}");
     expect(cleanup).not.toMatch(/needs:|permission-issues:|base.ref|user.login|merged ==|GITHUB_TOKEN/);
