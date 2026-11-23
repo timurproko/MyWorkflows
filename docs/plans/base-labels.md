@@ -1,5 +1,7 @@
 # Base labels and the agent-review label
 
+Historical plan: display names and metadata authority are superseded by [reference-driven renames](label-rename.md). Old names below describe that historical snapshot, not the current runner contract.
+
 ## Proposal
 
 Define the delivery workflow's base labels once in MyWorkflows and synchronize them in the existing reusable workflow. The review runner sets and clears the advisory Under review label directly; an isolated shared-workflow job clears it when a pull request is closed or merged.
