@@ -87,6 +87,24 @@ async function headAt(api, branch) {
   return ref.object.sha;
 }
 
+/** An update-branch merge is safe only when it brings trusted base content and leaves our palette intact. */
+async function trustedPendingCommits(api, commits, baseHead) {
+  if (!commits.length) return false;
+  for (const commit of commits) {
+    if (commit.commit?.message === title) continue;
+    if (!/^[a-f0-9]{40}$/.test(commit.sha ?? "") || commit.parents?.length !== 2
+      || commit.parents.some(parent => !/^[a-f0-9]{40}$/.test(parent.sha ?? ""))) return false;
+    const [topic, base] = commit.parents.map(parent => parent.sha);
+    const ancestry = await api("GET", `${prefix}/compare/${base}...${baseHead}`);
+    if (!["ahead", "identical"].includes(ancestry?.status) || ancestry.merge_base_commit?.sha !== base) return false;
+    const refresh = await api("GET", `${prefix}/compare/${base}...${commit.sha}`);
+    if (!Array.isArray(refresh?.files) || refresh.files.some(file => file.filename !== path || file.previous_filename)) return false;
+    // A refresh must not smuggle a manual palette edit into an otherwise trusted merge.
+    if (JSON.stringify(await manifestAt(api, topic)) !== JSON.stringify(await manifestAt(api, commit.sha))) return false;
+  }
+  return true;
+}
+
 /** Publish data only, through a topic PR. No API route in this function writes labels or the default branch. */
 export async function reconcileReference({ api = labelApi, apply = false, event, now = Date.now }) {
   const repo = await api("GET", prefix);
@@ -110,7 +128,7 @@ export async function reconcileReference({ api = labelApi, apply = false, event,
     const files = await pages(api, `pulls/${pull.number}/files`);
     const commits = await pages(api, `pulls/${pull.number}/commits`);
     if (pull.title !== title || !files.length || files.some(file => file.filename !== path || file.previous_filename)
-      || !commits.length || commits.some(commit => commit.commit?.message !== title)) {
+      || !await trustedPendingCommits(api, commits, baseHead)) {
       throw new Error("reference branch contains manual or unrelated edits; refusing to overwrite");
     }
     pendingManifest = await manifestAt(api, head);

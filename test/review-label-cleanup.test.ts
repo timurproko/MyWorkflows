@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
+import definitions from "../labels/base.json";
 import { describe, expect, it, vi } from "vitest";
 import { cleanupReviewLabel } from "../scripts/review-label-cleanup.mjs";
 import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/repository";
-const name = "🤖 Review";
-const oldName = "🤖 Under review";
+const name = definitions.labels["under-review"].name;
+const oldName = definitions.labels["under-review"].previousNames[0];
 const event = (merged = true, target = repository) => ({ action: "closed", number: 14, repository: { full_name: target },
   pull_request: { number: 14, state: "closed", merged, base: { ref: "non-default-target", repo: { full_name: target } }, user: { login: "dependabot[bot]" } } });
 const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
@@ -148,6 +149,23 @@ describe("closed-PR advisory review-label cleanup", () => {
     const source = fake({ states: states as string[] });
     expect((await cleanupReviewLabel({ repository, event: event(), api: source.api })).disposition).toBe("reopened");
     expect(source.api.mock.calls.some(([method]) => method === "DELETE")).toBe(false);
+  });
+
+  it.each([true, false])("rescans current and historical names when sync renames an assignment before DELETE, merged=%s", async merged => {
+    for (const reopened of [false, true]) {
+      const source = fake({ labels: [oldName, "🤖 Approved", "🤖 Rework"], states: ["closed", "closed", reopened ? "open" : "closed"] });
+      const api = vi.fn(async (method: string, path: string) => {
+        if (method === "DELETE" && path.endsWith(encodeURIComponent(oldName))) {
+          // Independent sync PATCH renames the definition and its assignment after the old-name read.
+          source.applied[source.applied.indexOf(oldName)] = name;
+          throw Object.assign(new Error("old definition name no longer exists"), { status: 404 });
+        }
+        return source.api(method, path);
+      });
+      expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe(reopened ? "reopened" : "removed");
+      expect(source.applied).toEqual([...(reopened ? [name] : []), "🤖 Approved", "🤖 Rework"]);
+      expect(api.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => decodeURIComponent(path.split("/").at(-1)!))).toEqual(reopened ? [oldName] : [oldName, name]);
+    }
   });
 
   it("confirms access and absence before treating DELETE 404 as idempotent", async () => {

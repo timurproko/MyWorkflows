@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { GITHUB_DEFAULT_LABELS } from "../scripts/prune-default-labels.mjs";
+import definitions from "../labels/base.json";
 
 const execute = promisify(execFile);
 const label = { ...GITHUB_DEFAULT_LABELS[1], default: true, id: 1 };
@@ -36,11 +37,7 @@ describe("delivery labels CLI", () => {
         expect(result.labels[0]).toMatchObject(prune ? { name: "bug", action: "would-delete", issues: 0, pullRequests: 0 }
           : { key: "under-review", action: "create" });
         if (!prune) {
-          expect(result.labels).toEqual([
-            { key: "under-review", name: "🤖 Review", action: "create" },
-            { key: "review-approved", name: "🤖 Approved", action: "create" },
-            { key: "review-changes-needed", name: "🤖 Rework", action: "create" },
-          ]);
+          expect(result.labels).toEqual(Object.entries(definitions.labels).map(([key, label]) => ({ key, name: label.name, action: "create" })));
         }
         expect(stderr.trim().split(/\r?\n/)).toEqual([
           `REQUEST repos/${repository}/labels?per_page=100&page=1`,

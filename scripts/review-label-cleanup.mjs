@@ -19,33 +19,38 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
     }
     return pull.state;
   }
-  async function hasLabel(name) {
+  async function assignedReviewNames() {
+    const assigned = new Set();
     for (let page = 1; page <= 1000; page++) {
       const labels = await api("GET", `${prefix}/issues/${number}/labels?per_page=100&page=${page}`);
       if (!Array.isArray(labels) || labels.length > 100 || labels.some(label => typeof label?.name !== "string")) {
         throw new Error("invalid pull-request label listing");
       }
-      if (labels.some(label => label.name === name)) return true;
-      if (labels.length < 100) return false;
+      for (const label of labels) if (names.includes(label.name)) assigned.add(label.name);
+      if (labels.length < 100) return [...assigned];
     }
     throw new Error("pull-request label pagination limit exceeded");
   }
   if (await currentState() === "open") return { number, disposition: "reopened" };
   let removed = false;
-  for (const name of names) {
-    if (!await hasLabel(name)) continue;
-    // Recheck before EACH alias removal; a closure can be followed by a new review after reopening.
-    if (await currentState() === "open") return { number, disposition: "reopened" };
-    try {
-      await api("DELETE", `${prefix}/issues/${number}/labels/${encodeURIComponent(name)}`);
-      removed = true;
-    } catch (error) {
-      if (error.status !== 404) throw error;
-      // A 404 may mean an inaccessible PR. Confirm access and this exact assignment's absence.
-      const state = await currentState();
-      if (await hasLabel(name)) throw error;
-      if (state === "open") return { number, disposition: "reopened" };
+  // Sync can rename an assigned definition while this independent job is removing it.
+  // Rescan the whole role after every removal/404, not just the now-missing old spelling.
+  for (let pass = 0; pass <= names.length; pass++) {
+    const assigned = await assignedReviewNames();
+    if (!assigned.length) return { number, disposition: removed ? "removed" : "absent" };
+    for (const name of assigned) {
+      if (await currentState() === "open") return { number, disposition: "reopened" };
+      try {
+        await api("DELETE", `${prefix}/issues/${number}/labels/${encodeURIComponent(name)}`);
+        removed = true;
+      } catch (error) {
+        if (error.status !== 404) throw error;
+        // A 404 may mean inaccessible PR, not a rename. Confirm access and exact-name absence.
+        const state = await currentState();
+        if ((await assignedReviewNames()).includes(name)) throw error;
+        if (state === "open") return { number, disposition: "reopened" };
+      }
     }
   }
-  return { number, disposition: removed ? "removed" : "absent" };
+  throw new Error("review assignments kept changing during cleanup; retry instead of reporting success");
 }

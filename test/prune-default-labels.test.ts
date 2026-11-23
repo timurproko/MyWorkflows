@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import definitions from "../labels/base.json";
+import definitions from "./fixtures/bootstrap-labels.json";
 import { GITHUB_DEFAULT_LABELS, labelUsage, pruneDefaultLabels } from "../scripts/prune-default-labels.mjs";
 import { labelsMain } from "../scripts/repository-labels.mjs";
 

@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import definitions from "../labels/base.json";
-import { labelMetadata, syncLabels, validateManifest } from "../scripts/repository-labels.mjs";
+import definitions from "./fixtures/bootstrap-labels.json";
+import { labelMetadata, syncLabels as synchronize, validateManifest } from "../scripts/repository-labels.mjs";
 
 const repository = "owner/consumer";
 const manifest = () => structuredClone(definitions);
+const syncLabels = options => synchronize({ manifest: manifest(), ...options });
 function fake(initial: any[]) {
   const labels = structuredClone(initial);
   const api = vi.fn(async (method: string, path: string, body?: any) => {

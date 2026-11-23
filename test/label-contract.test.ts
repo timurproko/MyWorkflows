@@ -1,16 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { loadBaseLabels } from "../scripts/repository-labels.mjs";
+import bootstrap from "./fixtures/bootstrap-labels.json";
 const file = (path: string) => readFile(path, "utf8");
 const guidance = ["README.md", "docs/delivery-labels.md", "skills/change-delivery/SKILL.md"];
 
 describe("stable reference-driven label and runner contract", () => {
-  it("publishes exact initial metadata, history, permanent keys and rename-stable reference identity", async () => {
+  it("documents fixed bootstrap examples separately from the mutable published palette", async () => {
     const manifest = await loadBaseLabels();
     expect(Object.keys(manifest.labels)).toEqual(["under-review", "review-approved", "review-changes-needed"]);
     for (const path of guidance) {
       const text = await file(path);
-      for (const [key, label] of Object.entries(manifest.labels) as [string, any][]) {
+      for (const [key, label] of Object.entries(bootstrap.labels) as [string, any][]) {
         expect(text).toContain(`\`${key}\``);
         expect(text).toContain(label.name);
         expect(text).toContain(`\`${label.color}\``);
@@ -73,7 +74,7 @@ describe("stable reference-driven label and runner contract", () => {
   it("keeps display-name literals out of runtime scripts and default pruning separate", async () => {
     for (const path of ["scripts/repository-labels.mjs", "scripts/review-label-cleanup.mjs", "scripts/run-label-automation.mjs", "scripts/reference-labels.mjs", ".github/workflows/delivery.yml", ".github/workflows/reference-labels.yml"]) {
       const source = await file(path);
-      for (const label of Object.values((await loadBaseLabels()).labels) as any[]) {
+      for (const label of Object.values(bootstrap.labels) as any[]) {
         for (const name of [label.name, ...label.previousNames]) expect(source).not.toContain(name);
       }
       if (!path.endsWith("repository-labels.mjs")) expect(source).not.toMatch(/pruneDefaultLabels|prune-unused-defaults|permission-issues/);

@@ -1,13 +1,13 @@
 import { readFile } from "node:fs/promises";
 import definitions from "../labels/base.json";
 import { describe, expect, it, vi } from "vitest";
-import { labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
+import { labelMetadata, labelsMain, listLabels, loadBaseLabels, syncLabels, validateManifest, validateRepository } from "../scripts/repository-labels.mjs";
 import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/arbitrary-repository";
-const base = { name: "🤖 Review", color: "840479", description: "" };
-const approved = { name: "🤖 Approved", color: "1a7f37", description: "" };
-const changesNeeded = { name: "🤖 Rework", color: "9a6700", description: "" };
+const base = labelMetadata(definitions.labels["under-review"]);
+const approved = labelMetadata(definitions.labels["review-approved"]);
+const changesNeeded = labelMetadata(definitions.labels["review-changes-needed"]);
 const palette = [base, approved, changesNeeded];
 const custom = { name: "custom", color: "abcdef", description: "keep me", default: false };
 const manifest = () => structuredClone(definitions);
@@ -49,12 +49,14 @@ describe("shared label repository identity validation", () => {
 });
 
 describe("central base-label definitions", () => {
-  it("matches all three exact robot definitions, including empty descriptions and no variation selectors", async () => {
+  it("loads the mutable published palette with all permanently stable keys and valid history/identities", async () => {
     const actual = await loadBaseLabels();
     expect(actual).toEqual(manifest());
-    for (const [label, suffix] of [[actual.labels["under-review"], "Review"],
-      [actual.labels["review-approved"], "Approved"], [actual.labels["review-changes-needed"], "Rework"]] as const) {
-      expect([...label.name].map(value => value.codePointAt(0))).toEqual([0x1f916, 32, ...[...suffix].map(value => value.codePointAt(0))]);
+    expect(Object.keys(actual.labels)).toEqual(["under-review", "review-approved", "review-changes-needed"]);
+    for (const label of Object.values(actual.labels) as any[]) {
+      expect(Array.isArray(label.previousNames)).toBe(true);
+      expect(label.reference.id).toBeGreaterThan(0);
+      expect(typeof label.reference.nodeId).toBe("string");
     }
   });
 
@@ -91,11 +93,11 @@ describe("central base-label definitions", () => {
     const api = reads([...palette.map(label => ({ ...label, color: "ffffff", description: "old" })), custom]);
     await syncLabels({ repository, api, apply: true });
     expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual(palette.map(label => ["PATCH",
-      `repos/${repository}/labels/${encodeURIComponent(label.name)}`, { color: label.color, description: "" }]));
+      `repos/${repository}/labels/${encodeURIComponent(label.name)}`, { color: label.color, description: label.description }]));
   });
 
   it("is a no-op for exact definitions or equivalent colors/null descriptions", async () => {
-    for (const existing of [palette, palette.map(label => ({ ...label, color: label.color.toUpperCase(), description: null }))]) {
+    for (const existing of [palette, palette.map(label => ({ ...label, color: label.color.toUpperCase(), description: label.description || null }))]) {
       const api = reads(existing);
       expect((await syncLabels({ repository, api, apply: true })).labels.map(label => label.action)).toEqual([
         "unchanged", "unchanged", "unchanged",
@@ -112,8 +114,9 @@ describe("central base-label definitions", () => {
   });
 
   it("leaves removed manifest entries unmanaged and refuses case collisions before all writes", async () => {
-    const api = reads([{ ...base, name: base.name.toUpperCase() }, custom]);
-    await expect(syncLabels({ repository, api, apply: true })).rejects.toThrow("collides");
+    const value = { version: 1, labels: { "under-review": { name: "Managed", color: "840479", description: "" } } };
+    const api = reads([{ ...base, name: "MANAGED" }, custom]);
+    await expect(syncLabels({ repository, api, manifest: value, apply: true })).rejects.toThrow("collides");
     expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
     expect((await syncLabels({ repository, api: reads([custom]) })).preserved).toEqual(["custom"]);
   });

@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import definitions from "../labels/base.json";
+import definitions from "./fixtures/bootstrap-labels.json";
 import { inspectDeliveryBody } from "../scripts/check-delivery-body.mjs";
 import { labelMetadata } from "../scripts/repository-labels.mjs";
+import { refreshReadyPullRequests } from "../scripts/ready-pull-request-refresh.mjs";
 import { reconcileReference, reconcileReferenceManifest, referenceBody, referenceMain, referenceAutomationMain } from "../scripts/reference-labels.mjs";
 
 const repository = "timurproko/MyWorkflows", prefix = `repos/${repository}`;
@@ -129,6 +130,58 @@ describe("protected reference publication", () => {
     expect(f.pulls).toHaveLength(1);
     expect(f.api.mock.calls.some(([method, route]) => method === "PATCH" && route === `${prefix}/git/refs/heads/chore%2Freference-labels-123`)).toBe(true);
   });
+  it("accepts a trusted update-branch refresh and still publishes the next UI edit", async () => {
+    const f = fake();
+    await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    const branch = f.pulls[0].head.ref, topic = f.refs[branch];
+    const base = "d".repeat(40), merged = "e".repeat(40);
+    f.refs.trunk = base; f.manifests[base] = manifest();
+    const pull = { ...f.pulls[0], state: "open", draft: false, base: { ref: "trunk", repo: { full_name: repository } }, head: { ...f.pulls[0].head, sha: topic } };
+    const request = vi.fn(async (route: string, options?: any) => {
+      if (route.includes("/pulls?")) return { body: [pull] };
+      if (route.endsWith("/pulls/1")) return { body: pull };
+      if (route.includes("/git/ref/")) return { body: { object: { sha: base } } };
+      if (route.includes("/compare/")) return { body: { behind_by: 1 } };
+      if (route.endsWith("/update-branch")) {
+        expect(options).toMatchObject({ method: "PUT", body: { expected_head_sha: topic } });
+        f.refs[branch] = merged; f.manifests[merged] = structuredClone(f.manifests[topic]);
+        return { status: 202 };
+      }
+      throw new Error("unexpected branch-refresh request");
+    });
+    vi.stubEnv("DELIVERY_BASE_BRANCH", "trunk");
+    try { expect((await refreshReadyPullRequests({ repository, request }))[0].disposition).toBe("updated"); }
+    finally { vi.unstubAllEnvs(); }
+    const refresh = { sha: merged, parents: [{ sha: topic }, { sha: base }], commit: { message: "Merge branch 'trunk' into chore/reference-labels-123" } };
+    const api = vi.fn(async (method, route, body?) => {
+      if (route.includes("/pulls/1/commits?")) return [...await f.api(method, route, body), refresh];
+      if (route === `${prefix}/compare/${base}...${base}`) return { status: "identical", merge_base_commit: { sha: base } };
+      if (route === `${prefix}/compare/${base}...${merged}`) return { files: [{ filename: "labels/base.json" }] };
+      return f.api(method, route, body);
+    });
+    f.live[0].name = "Reading after refresh";
+    const result = await reconcileReference({ api, apply: true });
+    expect(result.disposition).toBe("published");
+    expect(result.manifest.labels["under-review"].previousNames).toContain("In progress");
+    expect(f.pulls).toHaveLength(1);
+  });
+  it.each(["untrusted ancestry", "unrelated content", "manual palette edit"])("rejects a merge with %s before publication", async problem => {
+    const f = fake(); await reconcileReference({ api: f.api, apply: true, now: () => 123 });
+    const branch = f.pulls[0].head.ref, topic = f.refs[branch], base = f.refs.trunk, merged = "e".repeat(40);
+    f.refs[branch] = merged; f.manifests[merged] = structuredClone(f.manifests[topic]);
+    if (problem === "manual palette edit") f.manifests[merged].labels["under-review"].description = "manual";
+    const refresh = { sha: merged, parents: [{ sha: topic }, { sha: base }], commit: { message: "Merge base" } };
+    f.api.mockClear();
+    const api = vi.fn(async (method, route, body?) => {
+      if (route.includes("/pulls/1/commits?")) return [...await f.api(method, route, body), refresh];
+      if (route === `${prefix}/compare/${base}...${base}`) return { status: problem === "untrusted ancestry" ? "diverged" : "identical", merge_base_commit: { sha: base } };
+      if (route === `${prefix}/compare/${base}...${merged}`) return { files: [{ filename: problem === "unrelated content" ? "scripts/foreign.mjs" : "labels/base.json" }] };
+      return f.api(method, route, body);
+    });
+    await expect(reconcileReference({ api, apply: true })).rejects.toThrow("manual or unrelated");
+    expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
+  });
+
   it("creates a different branch after a previous PR closes", async () => {
     const f = fake(); await reconcileReference({ api: f.api, apply: true, now: () => 123 });
     f.pulls[0].state = "closed";

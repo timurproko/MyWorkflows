@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import definitions from "../labels/base.json";
-import { labelMetadata, REFERENCE_REPOSITORY, syncLabels } from "../scripts/repository-labels.mjs";
+import definitions from "./fixtures/bootstrap-labels.json";
+import { labelMetadata, REFERENCE_REPOSITORY, syncLabels as synchronize } from "../scripts/repository-labels.mjs";
 const manifest = () => structuredClone(definitions);
+const syncLabels = options => synchronize({ manifest: manifest(), ...options });
 function fake({ pending = false } = {}) {
   const labels = Object.values(definitions.labels).map(label => ({ ...labelMetadata(label.reference), id: label.reference.id, node_id: label.reference.nodeId }));
   const api = vi.fn(async (method: string, route: string, body?: any) => {
