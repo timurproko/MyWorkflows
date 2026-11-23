@@ -42,6 +42,8 @@ Status: implemented; the manifest and sync/CLI tests cover all three definitions
 
 ### 2. Closed-event regression tests preserve both verdict labels on merged and unmerged closures while clearing only Under review
 
+Status: implemented; 24 regression scenarios cover both verdicts individually and together, merged/unmerged closure, Under review present/absent, direct/default-on automation and repeat processing. The cleanup script and workflow already meet the contract and remain unchanged.
+
 - Preserve the existing cleanup script and isolated workflow job unless a demonstrated contract defect requires a narrowly scoped correction.
 - In `test/review-label-cleanup.test.ts`, cover each verdict on merged and unmerged closure, with Under review present and absent, plus both verdicts present defensively.
 - Assert final assignments and API writes: only the exact Under review assignment can be deleted; verdict and unrelated assignments survive, no repository definitions are deleted, and duplicate closure processing remains idempotent.
