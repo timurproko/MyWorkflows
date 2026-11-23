@@ -2,7 +2,15 @@
 
 ## Palette, default-on policy and timing
 
-`labels/base.json` is the only base-label definition. Its version-1 `labels` object is keyed by stable names; the first key is `under-review`. That entry exactly matches herdr-app's original label: `🤖 Under review`, color `840479`, empty description. The emoji is U+1F916 followed by one ordinary space, with no variation selector.
+`labels/base.json` is the only base-label definition. Its version-1 `labels` object has three stable keys, each with an empty description:
+
+| Key | GitHub name | Color |
+| --- | --- | --- |
+| `under-review` | 🤖 Under review | `840479` |
+| `review-approved` | 🤖 Approved | `1a7f37` |
+| `review-changes-needed` | 🤖 Changes needed | `9a6700` |
+
+Under review exactly matches herdr-app's original label and is unchanged. Every name starts with the robot emoji U+1F916 followed by one ordinary space, with no variation selector. Approved is green; Changes needed is amber. All three definitions are synced by the existing job, not a new workflow.
 
 The existing reusable Delivery workflow has two independent, non-required jobs: base-label sync and closed-PR review-label cleanup. Both are **enabled by default**, without per-repository setup. The **calling repository's** Actions variable `DELIVERY_LABELS_ENABLED=false` explicitly opts out of both automatic writers. The comparison is case-insensitive, without whitespace trimming: `false`, `False` and `FALSE` disable writes, but ` false ` does not. Unset, empty, `true` and any other value remain enabled. Existing `true` settings keep working. No variable or App permission is changed automatically.
 
@@ -74,22 +82,27 @@ Script basenames in the table refer to `scripts/` unless another directory is sp
 
 ## Direct review-runner contract (crew integration is separate)
 
-A review runner owns the normal lifetime of the `under-review` manifest entry. The label is **advisory**, not an approval, required check, readiness condition or merge gate. The person may merge while it is present. Its absence does not establish that review happened or passed.
+A review runner owns the normal lifetime of all three review-label assignments. All three labels are **advisory**, not required checks, readiness conditions or merge gates. The person may merge while Under review is present. Absence is not approval: it does not establish that review happened or passed. A retained verdict records a review result, not a guarantee that later commits were reviewed.
 
-Unless the repository has explicitly opted out, once the base definition is available, whoever starts an agent review uses their signed-in GitHub credential to add/remove only `🤖 Under review`. Do not create or change review labels for an opted-out repository. Ordinary PR-label editing with `gh` or `gh-axi` is sufficient. The exact API is:
+Unless the repository has explicitly opted out, once the base definitions are available, whoever starts an agent review uses their signed-in GitHub credential to add/remove only these three managed PR assignments, preserving unrelated labels. Do not create or change review labels for an opted-out repository. Ordinary PR-label editing with `gh` or `gh-axi` is sufficient. The exact API is:
 
 | Action | Request |
 | --- | --- |
-| Add | `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Under review"]}` |
-| Remove | `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/%F0%9F%A4%96%20Under%20review` |
+| Add Under review | `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Under review"]}` |
+| Add Approved | `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Approved"]}` |
+| Add Changes needed | `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Changes needed"]}` |
+| Remove Under review | `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/%F0%9F%A4%96%20Under%20review` |
+| Remove Approved | `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/%F0%9F%A4%96%20Approved` |
+| Remove Changes needed | `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/%F0%9F%A4%96%20Changes%20needed` |
 
 Do not replace the whole label set or delete the repository definition. Repeated add is harmless; repeated remove succeeds when absence is confirmed. A 404 can also mean an inaccessible PR/repository, so check access/absence rather than treating every 404 as successful cleanup. Surface permission/network failures and retry through existing recovery; no dispatch, App key or review-specific API is needed.
 
-The separate crew task must:
+The separate crew task (timurproko/crew PR #7) must:
 
 - Resolve the implementation PR from its worker's implementation report/current branch, not mistake a `Plan:` report for a final review target.
-- Add the label when `crew review` starts, before launching the reviewer, including on a draft or pending-CI PR. Report add failure honestly and remove on launch failure.
-- Remove on either report verdict (`APPROVE` or `CHANGES NEEDED`), malformed/failed reports, stop, finish, observed death and abandonment, using crew's existing Core/task lifecycle and recovery observations.
+- At review start, add Under review and remove any previous verdict label (both Approved and Changes needed) before launching the reviewer, including on a draft or pending-CI PR. Report operation failures honestly and remove Under review on launch failure.
+- On `APPROVE`, remove Under review and add Approved; on `CHANGES NEEDED`, remove Under review and add Changes needed. Verdicts are mutually exclusive; remove any opposite verdict and preserve unrelated labels.
+- On malformed/failed reports, stop, finish, observed death or abandonment, remove Under review without inventing a verdict, using crew's existing Core/task lifecycle and recovery observations.
 - Complete old cleanup before starting a replacement. Keep one owner per PR, or retain the label until that owner's last local reviewer ends. A plain label cannot coordinate overlapping independent controllers.
 - Add fake-Core/GitHub tests for verdicts, launch/terminal failure, stop/finish/death, repeated operations and denied access. No live labels are necessary for those tests.
 
@@ -97,7 +110,7 @@ No crew source is modified in this repository. There are no leases, heartbeats, 
 
 ## Closed-event final fallback
 
-On the **already forwarded** `pull_request_target: closed` event, `review-label-cleanup` removes the exact Under review assignment for either a merged or unmerged closure. It applies to any PR author/target branch, not only the default branch. It validates the event's repository and PR identity, checks current closure state, paginates assignments, then rechecks the PR before removal so a queued closure does not intentionally clear a newly reopened review. It preserves all other assignments and the definition. Missing assignment is an idempotent no-op; a DELETE 404 is successful only after confirming PR access and label absence.
+On the **already forwarded** `pull_request_target: closed` event, `review-label-cleanup` removes the exact Under review assignment for either a merged or unmerged closure. It applies to any PR author/target branch, not only the default branch. It validates the event's repository and PR identity, checks current closure state, paginates assignments, then rechecks the PR before removal so a queued closure does not intentionally clear a newly reopened review. It removes ONLY Under review: Approved and Changes needed survive closure as a review record, including when both verdict labels are present unexpectedly. Cleanup never removes or adds a verdict label. It preserves all other assignments and the definition. Missing assignment is an idempotent no-op; a DELETE 404 is successful only after confirming PR access and label absence.
 
 The job is enabled by default with sync, respects the same explicit opt-out, has its own App token, has no dependency into promotion/finalization, and uses job-level failure isolation with explicit warnings. Normal successfully processed closures therefore cannot keep a stale Under review label even if crew never reported. Explicit opt-out, failed API calls or lost event delivery can still prevent cleanup; they are not hidden by a claim of absolute availability. A last-read/reopen race cannot be made atomic with the label API.
 
