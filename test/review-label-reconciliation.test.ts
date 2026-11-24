@@ -115,10 +115,10 @@ describe("latest managed review-label reconciliation", () => {
   });
 
   it.each(["person", "crew[bot]", "delivery[bot]"])("treats actor %s equally and keeps the newly added historical name", async actor => {
-    const source = fake({ labels: [previous, approved, rework, "keep"], events: [addition(approved, 10), addition(rework, 20), addition(previous, 30)] });
+    const source = fake({ labels: [review, previous, approved, rework, "keep"], events: [addition(review, 5), addition(approved, 10), addition(rework, 20), addition(previous, 30)] });
     await reconcile({ ...source, event: event(previous, actor) });
     expect(source.assigned).toEqual([previous, "keep"]);
-    expect(writes(source.api)).toHaveLength(2);
+    expect(writes(source.api)).toHaveLength(3);
   });
 
   it("uses stable manifest roles with arbitrary future names and ignores unrelated roles", async () => {

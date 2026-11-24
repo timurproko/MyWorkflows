@@ -100,8 +100,27 @@ describe("stable reference-driven label and runner contract", () => {
     expect(docs).toContain("` false ` does not");
     expect(docs).toContain("No label job is a prerequisite");
   });
+  it("publishes advisory latest-addition exclusivity and its narrow caller subscription", async () => {
+    for (const path of guidance) {
+      const text = (await file(path)).replace(/\s+/g, " ");
+      for (const term of ["review-label-reconciliation", "current/historical", "bot", "person", "event-id", "timestamps", "Closed/merged", "only `labeled`", "test triggers", "non-atomic", "read/DELETE", "xrbuild"]) {
+        expect(text, `${path}: ${term}`).toContain(term);
+      }
+      expect(text).not.toContain("PR label assignments do not restart shared delivery");
+      expect(text).not.toContain("opts out of both");
+    }
+    const docs = await file("docs/delivery-labels.md");
+    for (const repository of ["herdr-app", "crew", "a1", "xrbuild", ".xrbuild", "MyConfigs", "MyWorkflows"]) {
+      expect(docs).toContain(`\`timurproko/${repository}\``);
+    }
+    expect(docs).toContain("+    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed, labeled]");
+    expect(docs).toContain("`.github/workflows/self-delivery.yml`");
+    for (const term of ["zero consumer edits are impossible", "created_at", "issues/{pr}/events", "twice reads", "queue: max", "100 pending", "no assignment is restored", "independently of delivery", "no other repository is edited"]) {
+      expect(docs.toLowerCase()).toContain(term.toLowerCase());
+    }
+  });
   it("keeps display-name literals out of runtime scripts and default pruning separate", async () => {
-    for (const path of ["scripts/repository-labels.mjs", "scripts/review-label-cleanup.mjs", "scripts/review-label-sweep.mjs", "scripts/run-label-automation.mjs", "scripts/reference-labels.mjs", ".github/workflows/delivery.yml", ".github/workflows/reference-labels.yml"]) {
+    for (const path of ["scripts/repository-labels.mjs", "scripts/review-label-cleanup.mjs", "scripts/review-label-reconciliation.mjs", "scripts/review-label-sweep.mjs", "scripts/run-label-automation.mjs", "scripts/reference-labels.mjs", ".github/workflows/delivery.yml", ".github/workflows/reference-labels.yml"]) {
       const source = await file(path);
       for (const label of Object.values(bootstrap.labels) as any[]) {
         for (const name of [label.name, ...label.previousNames]) expect(source).not.toContain(name);

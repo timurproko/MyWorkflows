@@ -78,7 +78,7 @@ A missed rename recovers the accepted manifest name as an alias. Entirely missed
 
 ## Default-on consumer sync and transition behavior
 
-Both existing isolated automatic jobs, base-label sync and closed-PR cleanup, are **enabled by default**. The **calling repository's** `DELIVERY_LABELS_ENABLED=false` opts out of both (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value remain enabled; ` false ` does not disable writes. No variable is set automatically. Opt-out occurs before label API reads or token minting. Manual dry runs stay read-only even when opted out and do not mint a label App token.
+All three isolated automatic jobs, base-label sync, open-PR exclusivity and closed-PR cleanup, are **enabled by default**. The **calling repository's** `DELIVERY_LABELS_ENABLED=false` opts out of all three (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value remain enabled; ` false ` does not disable writes. No variable is set automatically. Opt-out occurs before label API reads or token minting. Manual dry runs stay read-only even when opted out and do not mint a label App token.
 
 Each consumer receives a changed manifest on its **next forwarded delivery event after merge**; idle repositories wait. A reference UI edit alone does not immediately update consumers, and opening its PR does not publish the new contract. Sync compares the entire paginated listing before writing:
 
@@ -91,7 +91,7 @@ Each consumer receives a changed manifest on its **next forwarded delivery event
 
 Renaming preserves the GitHub label id and existing issue/PR assignments. If old and new both exist, the new one wins, the old one is left alone and reported; assignments are not merged automatically. Report mode shows each planned rename and conflict with zero mutation. Sync never deletes definitions or directly modifies assignments. Removed manifest entries become unmanaged. GitHub write payloads contain only the endpoint's supported fields, not reference metadata/history. Permission/API failures remain visible warnings and summaries, independently of promotion, finalization and the Delivery check. No label job is a prerequisite of required delivery jobs.
 
-Callers tracking `main` need no edit. Version-pinned callers must update the workflow reference and matching `tools_ref` to the same reviewed revision; `tools_ref` defaults to `main`. A workflow pin alone does not pin scripts: pin tooling to the same old revision until upgrading both together. A previous read-only snapshot found a1, crew, herdr-app, xrbuild and its private workspace tracking main with default tooling; MyWorkflows calls its local workflow. None of these six consumers needs an update for a moving-main rollout; this is not a maintained inventory.
+Definition sync needs no caller edit for callers tracking `main`. Open-PR exclusivity separately requires the `labeled` subscription described below. Version-pinned callers must update the workflow reference and matching `tools_ref` to the same reviewed revision; `tools_ref` defaults to `main`. A workflow pin alone does not pin scripts: pin tooling to the same old revision until upgrading both together. A previous read-only snapshot found a1, crew, herdr-app, xrbuild and its private workspace tracking main with default tooling; MyWorkflows calls its local workflow. None of these six consumers needs an update for a moving-main definition-sync rollout; this is not a maintained inventory or a promise of automatic label-event subscription.
 
 ## Scheduling and assignment-only events
 
@@ -104,33 +104,84 @@ whole-run cancellation remain limits. This is not a guarantee against every poss
 See [GitHub's concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
 Review-label **assignments** do not change source, implementation bodies, readiness or label definitions.
-`pull_request`/`pull_request_target` actions `labeled` and `unlabeled` should not restart delivery or tests.
-The delivery caller template and this repository's self-caller omit those actions. Shared finalization,
-Delivery check and label-sync also skip them if a nonstandard caller forwards them; closed-event cleanup and
-post-merge refresh keep their existing event guards. The separate reference workflow still receives repository
+Only the new advisory `review-label-reconciliation` job runs on open `pull_request`/`pull_request_target: labeled`
+events. Shared finalization, Delivery check, label-sync, refresh, branch cleanup and closed-review cleanup all
+skip assignment-only events, including nonstandard callers forwarding `unlabeled`. No new required check or
+job dependency is introduced. Unmanaged additions are no-ops after manifest resolution; editable names and
+`previousNames` cannot be hard-coded in the YAML guard. The separate reference workflow still receives repository
 `label: [edited, created, deleted]` events, which concern definition changes rather than PR assignments.
 
-A read-only audit found the label-triggered CI restart in both **timurproko/herdr-app/.github/workflows/tests.yml**
-and **timurproko/crew/.github/workflows/tests.yml**. The exact proposed follow-up in each consumer is to change:
+### Exact caller rollout and test-workflow audit
 
-```yaml
-on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+MyWorkflows #36 deliberately removed assignment events from callers. A reusable workflow cannot add subscriptions
+to its caller, so zero consumer edits are impossible for callers still omitting `labeled`. Append **only `labeled`**
+to `on.pull_request_target.types` in the delivery caller, leaving every other trigger, permission and job unchanged.
+All seven inspected callers have the same old line; use this exact one-line replacement in each listed file:
+
+```diff
+-    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed]
++    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed, labeled]
 ```
 
-Remove only `labeled` and `unlabeled` from their existing lists; keep push/manual triggers, job readiness and
-per-PR code-change supersession unchanged. Their inspected readiness and required-gate jobs do not depend on
-labels. A job-level skip is too late: workflow-level concurrency can already cancel the previous CI run.
-Neither consumer is edited by this shared change. There is no consumer test-workflow template here that could
-update those files centrally; `templates/delivery-caller.yml` controls delivery only. Consumers using labels as
-real test inputs must assess that policy separately; advisory review labels are not test inputs here.
+| Repository | Delivery caller | Test workflow and label-event status at read-only audit |
+| --- | --- | --- |
+| `timurproko/herdr-app` | `.github/workflows/delivery.yml` | `tests.yml`: both assignment actions excluded |
+| `timurproko/crew` | `.github/workflows/delivery.yml` | `tests.yml`: both assignment actions excluded |
+| `timurproko/a1` | `.github/workflows/delivery.yml` | `ci.yml`: explicit PR types exclude both; other inspected test entry points do not subscribe to label events or Delivery completion |
+| `timurproko/xrbuild` | `.github/workflows/delivery.yml` | `ci.yml`: **already includes both `labeled` and `unlabeled`**; exception below |
+| `timurproko/.xrbuild` | `.github/workflows/delivery.yml` | `ci.yml`: both assignment actions excluded |
+| `timurproko/MyConfigs` | `.github/workflows/delivery.yml` | `ci.yml`: both assignment actions excluded |
+| `timurproko/MyWorkflows` | `.github/workflows/self-delivery.yml` | `test.yml`: default PR actions exclude both |
 
-This repository's test workflow uses GitHub's default PR actions (opened, synchronize, reopened), excluding
-labels; the inspected a1 development-validation and xrbuild workspace CI triggers already omit them as well.
-Moving-main callers receive the shared queue/guards after merge, but fixing the two consumer test subscriptions
-requires the separate edits above. Historical cancelled checks are not rewritten or rerun by this change.
+The template and MyWorkflows self-caller are updated here; no other repository is edited. Other callers tracking
+`main` receive the new shared job after merge but still need that event subscription; pinned callers align the
+workflow reference and matching `tools_ref` too. Callers already forwarding `labeled` need no subscription edit.
+Do not add `unlabeled` to delivery, and keep both assignment actions excluded from test triggers.
+
+Adding a delivery-only subscription cannot itself subscribe another workflow to events, and no inspected test
+workflow consumes Delivery completion. Thus it does not start tests in the six label-isolated consumers. However,
+xrbuild's existing `.github/workflows/ci.yml` line 10 is:
+
+```yaml
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited, labeled, unlabeled]
+```
+
+Its CI already runs on label additions/removals independently of delivery, including App-produced removals. Test
+isolation there cannot honestly be confirmed until a separately authorized consumer change removes only the last
+two entries, yielding `types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]`.
+No such consumer change is made here. herdr-app and crew have already applied that test-trigger exclusion;
+do not undo it. A job-level skip is too late because workflow-level concurrency may already cancel tests.
+Historical cancelled checks are not rewritten or rerun by this change.
+
+### Open-PR exclusivity and deterministic ordering
+
+For each managed addition, resolve `under-review`, `review-approved` and `review-changes-needed` from one validated
+manifest, including every `previousNames` alias. Bot and person additions use the same policy. Validate event/PR
+identity, read current open state and paginate current assignments rather than trusting webhook labels. Ignore
+unmanaged additions; closed/merged PRs are no-ops owned by clear-on-close cleanup.
+
+When multiple managed names remain, paginate `GET /repos/{owner}/{repo}/issues/{pr}/events`. Select the latest
+applicable managed `labeled` addition by its assignment event `created_at`, with numeric event-id ordering for
+equal timestamps. Neither label-definition creation timestamps nor run start/queue order choose the winner.
+Current assignments and later `unlabeled` history exclude removed labels; no assignment is restored. A single
+assigned role renamed by definition sync can resolve history through its aliases; ambiguous/missing history fails
+closed instead of guessing. Preserve the winning exact current/historical name and delete only competing managed
+assignments, even if two aliases of one role coexist. Never replace the entire label set or change definitions.
+
+The dedicated per-repository/PR `delivery-review-label-reconciliation` concurrency group uses `queue: max` and
+`cancel-in-progress: false`. Jobs serialize, but ordering remains independent of execution order because each
+reads fresh history. Before each individual deletion the script twice reads current assignments, latest history
+and open state, retries changed snapshots within a bound, and rescans after writes. DELETE 404s require confirmed
+PR access and exact assignment absence. Missing App rights, malformed/incomplete history, denied reads or bounded
+churn produce visible advisory warnings/summaries; required delivery jobs are independent. The existing opt-out
+occurs before token minting or label API reads and no fallback credential is used for writes.
+
+Limits: GitHub's timestamps can tie, so the event-id tie-break is deterministic rather than a subsecond wall-clock
+claim. History/webhook visibility delays, failed APIs, explicit cancellations, queue overflow (100 pending jobs)
+and consumer whole-run cancellation can postpone reconciliation. There is no schedule/backfill, historical sweep,
+lease, timer, crash-expiry guarantee or cross-controller lock. GitHub offers no atomic delete-if-still-open-and-latest
+endpoint; the read/DELETE race remains: independent writers or closure/reopen between the last read and DELETE remain a non-atomic race. The
+closed-event job still owns closures; no stale verdict or review label is automatically restored after reopening.
 
 ## Runner manifest API and crew contract
 
@@ -170,7 +221,7 @@ GitHub has no atomic delete-if-still-closed operation: reopening between the fin
 
 ## Permissions and optional default pruning
 
-Sync and cleanup mint separate repository-scoped App tokens with existing **Pull requests write** permission, revoked after each job. GitHub labels endpoints accept that grant despite the `/issues/` namespace; **no added Issues permission** or caller permission change is needed. See [GitHub's label API permissions](https://docs.github.com/en/rest/issues/labels#create-a-label). The caller token is read-only diagnostic access, never a write fallback. Missing App rights/secrets, forbidden access and rate limits produce warnings, not delivery failures. Local diagnostics/manual apply use the signed-in `gh` credential or normal `GH_TOKEN`; never export the App private key. Private repositories require actual access.
+Sync, open-PR reconciliation and cleanup mint separate repository-scoped App tokens with existing **Pull requests write** permission, revoked after each job. GitHub labels endpoints accept that grant despite the `/issues/` namespace; **no added Issues permission** or caller permission change is needed. See [GitHub's label API permissions](https://docs.github.com/en/rest/issues/labels#create-a-label). The caller token is read-only diagnostic access, never a write fallback. Missing App rights/secrets, forbidden access and rate limits produce warnings, not delivery failures. Local diagnostics/manual apply use the signed-in `gh` credential or normal `GH_TOKEN`; never export the App private key. Private repositories require actual access.
 
 `delivery labels --repo owner/name` emits the read-only palette diff; explicit `--apply` synchronizes definitions. `--prune-unused-defaults` instead reports default-label usage; `--apply --prune-unused-defaults` explicitly prunes eligible defaults instead of syncing. Every apply/prune needs separate named-repository authorization; implementation approval does not authorize live writes. Automatic jobs never invoke the pruner.
 
@@ -182,4 +233,4 @@ Pruning additionally needs visibility of both issues and PRs, including closed/m
 
 All label listing, sync, usage/pruning, manual sweep and closed-event cleanup share `validateRepository` in `scripts/repository-labels.mjs`. Both CLI repo flag forms work. Owners are 1–39 ASCII letters/digits or single separating hyphens, without leading/trailing/consecutive hyphens. Repository names are 1–100 ASCII letters/digits, hyphens, underscores or dots, except exactly `.` or `..`. Dotted/leading-dot names are accepted unchanged; slash extras, whitespace, URLs, percent escapes and query/fragment syntax are rejected, without trimming or stripping `.git`.
 
-Other delivery/protection identity parsers were audited previously and already accept leading dots; tightening their broader owner/length rules is a separate follow-up, unchanged here. This label change does not alter consumer identity parsing, protection, caller events or workflow permission grants.
+Other delivery/protection identity parsers were audited previously and already accept leading dots; tightening their broader owner/length rules is a separate follow-up, unchanged here. The exclusivity addition changes only the labeled-event subscription in template/self-callers; it does not alter consumer identity parsing, protection or workflow permission grants.

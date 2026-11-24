@@ -43,6 +43,8 @@ Status: implemented; 233 focused reconciliation/runner/cleanup/workflow/self-cal
 
 ### 3. Published contracts explain exclusivity, ordering limits and the exact consumer rollout
 
+Status: implemented; README, label documentation and the shared skill describe the third advisory writer, exact seven-consumer caller edits and honest test-isolation limits. Contract tests pass.
+
 - Update `README.md`, `docs/delivery-labels.md` and the shared skill's label contract to describe the new advisory default-on writer, latest-event selection, aliases, bot/person parity, closed-PR no-op and unchanged closure ownership.
 - Replace the blanket statement that assignment events run no delivery jobs with the precise exception: labeled additions run only the reconciliation job, while code-delivery jobs and consumer tests remain unaffected.
 - Document the exact caller edit (append `labeled` only), why zero caller edits are impossible for callers omitting that event, moving-main versus pinned rollout, no consumer test-workflow edits, and no agent live writes to other repositories.
@@ -52,3 +54,11 @@ Status: implemented; 233 focused reconciliation/runner/cleanup/workflow/self-cal
 ## Validation after approval
 
 Use quick targeted reconciliation/runner/workflow-contract checks before each outcome push and tick that PR outcome as its code and tests land. After implementation run the whole `npm test` suite and `node test/generated-palettes.mjs` full-suite palette variants, preserving failure evidence without weakening assertions or timeouts. Bring the branch current with the default branch and validate the final PR body with `delivery check-body` before the last tick. Inspect required checks on the exact final head and report their state; no plan-stage suite or final-head implementation CI is claimed. Never manually mark ready, arm auto-merge or merge. No live writes to other repositories are part of validation.
+
+## Implementation evidence and remaining limits
+
+All three outcomes are implemented. The focused reconciliation, runner, cleanup, workflow and self-caller set passes 233 tests; label-documentation and workflow/reconciliation contracts pass 85 tests. With Node 24.22.0 and the pinned Vitest 5.1.1, the complete `npm test` run and both generated-palette full-suite runs each pass 643 of 644 tests across 35 files, failing only the already documented Windows bootstrap setup 5000 ms timeout. The unchanged bootstrap file passes all six tests in a focused rerun. No timeout or assertion is weakened; final-head Linux required checks remain the integration gate and their results go in the task report.
+
+A read-only audit found all seven delivery callers still need the same appended `labeled` entry (the self-caller change is included here). herdr-app, crew, a1, .xrbuild, MyConfigs and MyWorkflows exclude label actions from their inspected test triggers and do not run tests on Delivery completion. xrbuild's existing `.github/workflows/ci.yml` still includes both `labeled` and `unlabeled`; its tests already run independently on additions/removals. Test isolation there requires a separate authorized consumer fix to remove those two actions; it is not implemented or claimed here. No other repository was edited or written to. Read-only herdr-app #61 issue-event inspection confirmed the ordering fields and original conflicting additions, without changing its labels.
+
+GitHub's final-read/DELETE window, external writers, history delays, API failures and bounded queue/churn remain documented best-effort limits. No open or historical PR sweep, timer or automatic restoration is introduced.

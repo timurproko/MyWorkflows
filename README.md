@@ -62,12 +62,13 @@ Created/unmanaged labels are not adopted and deleting a reference never deletes 
 may omit the robot prefix. `delivery labels-reference` reports missed-event reconciliation;
 `--apply` publishes a topic PR only, never writes labels or main.
 
-Sync and closed-PR cleanup are **enabled by default**. The consumer's `DELIVERY_LABELS_ENABLED=false` opts out
+Sync, open-PR exclusivity and closed-PR cleanup are **enabled by default**. The consumer's `DELIVERY_LABELS_ENABLED=false` opts out
 (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value remain enabled.
 After the reference PR merges, each consumer syncs on its next delivery event; idle repositories wait.
 Renames use `previousNames` and PATCH `new_name` to preserve existing assignments. When old and new both exist,
 keep the new one, preserve/report the old one and never delete automatically. Reference sync guards unmerged UI drift.
-Callers tracking `main` need no edit; pinned callers must align the workflow reference and matching `tools_ref`.
+Definition sync needs no caller edit for callers tracking `main`; pinned callers must align the workflow reference and matching `tools_ref`.
+Open-PR exclusivity requires callers to forward `labeled` as described below.
 Manual dry runs stay read-only even when opted out; optional default pruning needs separate explicit consent
 and excludes managed current/historical names.
 
@@ -87,9 +88,15 @@ The runner uses its signed-in credential; no heartbeat, lease or timed crash-exp
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
 Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
-PR label assignments do not restart shared delivery; callers should also omit `labeled`/`unlabeled` from test
-triggers. The exact crew/herdr-app CI follow-ups and queue limits are in
-[the scheduling guidance](docs/delivery-labels.md#scheduling-and-assignment-only-events).
+Open-PR additions run only the advisory `review-label-reconciliation` job, not the other delivery jobs.
+It keeps the latest managed addition from fresh assignments and issue-event `created_at` timestamps, with event-id
+ordering for equal timestamps, regardless of bot or person; current/historical aliases participate equally.
+Closed/merged PRs are no-ops for this writer. Per-PR serialization uses a multi-pending queue, while fresh history
+prevents an older queued event winning. API failures, history delays, queue cancellation and the non-atomic
+read/DELETE race remain best-effort limits; no labels are added or restored.
+Append only `labeled` to the delivery caller's PR event types; reusable workflows cannot subscribe for callers.
+Keep `labeled`/`unlabeled` out of test triggers. The [exact seven-consumer caller edits and test audit](docs/delivery-labels.md#scheduling-and-assignment-only-events)
+include xrbuild's existing label-triggered CI exception; other inspected consumer test workflows exclude labels.
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
