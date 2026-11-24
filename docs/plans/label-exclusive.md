@@ -1,6 +1,6 @@
 # Mutually exclusive managed review-label assignments
 
-Status: proposed; awaiting approval before implementation.
+Status: approved for implementation; outcomes tracked below.
 
 ## Problem and scope
 
@@ -19,6 +19,8 @@ Keep consumer TEST workflows unchanged and excluding `labeled`/`unlabeled`. On l
 ## Implementation outcomes
 
 ### 1. Reconciliation keeps only the latest managed review-label addition on open pull requests
+
+Status: implemented; 49 focused fake-API unit tests pass, including ordering, aliases, actor parity, closure, opt-out, pagination, stale events, API failures and bounded churn.
 
 - Add a reconciliation module using the existing validated manifest, repository validation and label API conventions; resolve all current/historical names by stable key rather than emoji or display-name literals.
 - Validate event/repository/PR identity and require a managed `labeled` event. Read current PR state and paginate current assignments at run time; never use the webhook's label array as current truth. Closed/merged PRs are no-ops owned by existing clear-on-close handling.
