@@ -16,6 +16,18 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
 for that PR, and only with green CI on its current head.
 
+## Ready pull-request refresh
+
+After a merge, the shared job refreshes stale, ready PRs with same-repository heads against the delivery target,
+using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
+not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
+Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
+naming the repository, PR and GitHub reason; independent PRs are still refreshed. Unknown errors, rate limits,
+invalid credentials and denied reads remain failures. The App's permissions are not expanded and no fallback
+token is used. Consumers tracking the shared workflow and tooling at `main` receive this behavior without caller
+edits after merge.
+
 ## Adopting it in a repository
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
@@ -74,6 +86,10 @@ All three labels are advisory; absence is not approval, and a retained verdict d
 The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
+Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
+PR label assignments do not restart shared delivery; callers should also omit `labeled`/`unlabeled` from test
+triggers. The exact crew/herdr-app CI follow-ups and queue limits are in
+[the scheduling guidance](docs/delivery-labels.md#scheduling-and-assignment-only-events).
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
