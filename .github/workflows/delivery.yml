@@ -40,6 +40,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch'
       || (github.event_name == 'pull_request_target' && github.event.action != 'closed'
+      && github.event.action != 'labeled' && github.event.action != 'unlabeled'
       && github.event.pull_request.base.ref == github.event.repository.default_branch
       && github.event.pull_request.user.login != 'dependabot[bot]')
     runs-on: ubuntu-24.04
@@ -87,6 +88,7 @@ jobs:
     name: Delivery check
     if: >-
       github.event_name == 'pull_request_target' && github.event.action != 'closed'
+      && github.event.action != 'labeled' && github.event.action != 'unlabeled'
       && github.event.pull_request.draft == false
       && github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ubuntu-24.04
@@ -185,6 +187,10 @@ jobs:
 
   label-sync:
     name: Sync the base labels
+    # Assignment-only events do not change definitions and must not restart delivery checks.
+    if: >-
+      github.event_name != 'pull_request_target'
+      || (github.event.action != 'labeled' && github.event.action != 'unlabeled')
     # Read-only manual diffs use github.token, including for private repository labels.
     permissions:
       contents: read
@@ -195,6 +201,8 @@ jobs:
     timeout-minutes: 5
     concurrency:
       group: delivery-label-sync
+      # False alone still replaces an existing pending job in GitHub's default single-slot queue.
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Check out trusted delivery tooling
@@ -228,7 +236,7 @@ jobs:
         run: node scripts/run-label-automation.mjs
 
   review-label-cleanup:
-    name: Clear the closed pull request's review label
+    name: Clear the closed pull request's managed review labels
     if: github.event_name == 'pull_request_target' && github.event.action == 'closed'
     # This advisory fallback must never fail promotion/finalization or become a required merge gate.
     continue-on-error: true
@@ -260,7 +268,7 @@ jobs:
           private-key: ${{ secrets.app_private_key }}
           permission-pull-requests: write
 
-      - name: Remove only Under review or report explicit opt-out
+      - name: Clear all current and historical managed review names or report opt-out
         env:
           GH_TOKEN: ${{ steps.cleanup-app.outputs.token }}
           LABELS_APP_TOKEN: ${{ steps.cleanup-app.outputs.token }}

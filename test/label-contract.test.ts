@@ -1,111 +1,119 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { loadBaseLabels } from "../scripts/repository-labels.mjs";
-
+import bootstrap from "./fixtures/bootstrap-labels.json";
 const file = (path: string) => readFile(path, "utf8");
+const guidance = ["README.md", "docs/delivery-labels.md", "skills/change-delivery/SKILL.md"];
 
-describe("label adoption and separate review-runner contract", () => {
-  it("documents every exact manifest definition and direct API operations", async () => {
+describe("stable reference-driven label and runner contract", () => {
+  it("documents fixed bootstrap examples separately from the mutable published palette", async () => {
     const manifest = await loadBaseLabels();
-    const docs = await file("docs/delivery-labels.md");
-    const skill = await file("skills/change-delivery/SKILL.md");
-    for (const path of ["docs/delivery-labels.md", "README.md", "skills/change-delivery/SKILL.md"]) {
+    expect(Object.keys(manifest.labels)).toEqual(["under-review", "review-approved", "review-changes-needed"]);
+    for (const path of guidance) {
       const text = await file(path);
-      for (const [key, label] of Object.entries(manifest.labels) as [string, { name: string; color: string }][]) {
+      for (const [key, label] of Object.entries(bootstrap.labels) as [string, any][]) {
         expect(text).toContain(`\`${key}\``);
         expect(text).toContain(label.name);
         expect(text).toContain(`\`${label.color}\``);
+        for (const name of label.previousNames) expect(text).toContain(name);
       }
-      expect(text).toContain("empty description");
-      expect(text).toContain("U+1F916");
-      expect(text).toContain("one ordinary space");
-      expect(text).toContain("variation selector");
+      for (const term of ["empty description", "U+1F916", "one ordinary space", "variation selector", "previousNames", "version", "GitHub", "node id"]) expect(text).toContain(term);
+      expect(text).toMatch(/(?:stable|permanently stable)/);
+      expect(text).toMatch(/(?:omit|remove) the robot prefix/);
     }
-    expect(docs).toContain('`POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["🤖 Under review"]}`');
-    for (const label of Object.values(manifest.labels) as { name: string }[]) {
-      expect(docs).toContain(`\`POST /repos/{owner}/{repo}/issues/{pr}/labels\` with \`${JSON.stringify({ labels: [label.name] })}\``);
-      expect(docs).toContain(`DELETE /repos/{owner}/{repo}/issues/{pr}/labels/${encodeURIComponent(label.name)}`);
-    }
-    expect(skill).toContain("signed-in credential");
-    expect(skill).toContain("APPROVE");
-    expect(skill).toContain("CHANGES NEEDED");
-    expect(skill).toMatch(/stop, finish, observed\s+death or abandonment/);
-    expect(skill).toContain("advisory");
-    expect(skill).toMatch(/confirm access and absence/i);
   });
-
-  it("keeps the runner verdict lifecycle and persistent closure record consistent", async () => {
-    for (const path of ["docs/delivery-labels.md", "README.md", "skills/change-delivery/SKILL.md"]) {
+  it("documents default-branch runtime resolution, warned fallback and crew's bounded single-read exception", async () => {
+    for (const path of guidance) {
       const text = (await file(path)).replace(/\s+/g, " ");
-      expect(text).toMatch(/At review start,.*?add[s]? Under review and remove[s]? any previous verdict label/);
-      expect(text).toContain("before launching the reviewer");
-      expect(text).toMatch(/On `APPROVE`, (?:it )?removes? Under review and adds? Approved/);
-      expect(text).toMatch(/on `CHANGES NEEDED`, (?:it )?removes? Under review and adds? Changes needed/);
-      expect(text).toContain("Verdicts are mutually exclusive");
-      expect(text).toContain("without inventing a verdict");
-      expect(text).toMatch(/removes ONLY Under review/);
-      expect(text).toContain("Approved and Changes needed survive closure as a review record");
-      expect(text).toMatch(/[Aa]ll three labels are (?:\*\*)?advisory/);
-      expect(text.toLowerCase()).toContain("absence is not approval");
-      expect(text).toContain("later commits were reviewed");
-      expect(text).toMatch(/crew PR #7/);
+      expect(text).toContain("contents/labels/base.json");
+      expect(text).toContain("application/vnd.github.raw+json");
+      expect(text).toMatch(/[Oo]mitting `ref` resolves the default branch/);
+      expect(text).toMatch(/(?:explicit|explicitly)/i);
+      expect(text).toMatch(/(?:two-second timeout)/);
+      expect(text).toMatch(/(?:warn|warned|warns)/i);
+      expect(text).toMatch(/(?:silently|silent fallback)/);
     }
-  });
-
-  it("states default-on opt-out semantics, permissions and non-instant synchronization cadence", async () => {
     const docs = await file("docs/delivery-labels.md");
-    const readme = await file("README.md");
-    const skill = await file("skills/change-delivery/SKILL.md");
-    for (const text of [docs, readme, skill]) {
+    expect(docs).toContain("https://api.github.com/repos/timurproko/MyWorkflows/contents/labels/base.json");
+    expect(docs).toContain("A runner **MAY use built-in defaults");
+    expect(docs).toContain("may leave those assignments untouched");
+    expect(docs).toContain("exactly one contents API read");
+  });
+  it("keeps role-based lifecycle, legacy cleanup and crew PR 7 limitations consistent", async () => {
+    for (const path of guidance) {
+      const text = (await file(path)).replace(/\s+/g, " ");
+      for (const term of ["At review start", "before launching the reviewer", "APPROVE", "CHANGES NEEDED", "Verdicts are mutually exclusive", "without inventing a verdict", "current/historical", "advisory", "absence is not approval", "later commits were reviewed", "crew PR #7"]) expect(text).toContain(term);
+      expect(text).toMatch(/stop, finish, observed death or abandonment/);
+      expect(text).toContain("signed-in credential");
+      expect(text).toMatch(/(?:heartbeat|lease)/);
+    }
+    const docs = await file("docs/delivery-labels.md");
+    expect(docs).toMatch(/confirm access and absence/i);
+    expect(docs).toContain("no time-based crash-expiry guarantee");
+    expect(docs).toContain("historical PRs");
+    expect(docs).toContain("DELETE /repos/{owner}/{repo}/issues/{pr}/labels/{URL-encoded-resolved-name}");
+  });
+  it("publishes clear-on-close for every role and report-first separately authorized historical recovery", async () => {
+    for (const path of guidance) {
+      const text = (await file(path)).replace(/\s+/g, " ");
+      expect(text).toContain("Closed/merged cleanup removes all three managed roles'");
+      expect(text).toContain("current/historical assignments, including both verdicts");
+      expect(text).toContain("until the next review sets one");
+      expect(text).toContain("delivery labels-sweep --repo owner/name");
+      expect(text).toContain("read-only");
+      expect(text).toContain("--apply");
+      expect(text).toContain("separate named-repository authorization");
+      expect(text).toContain("fresh report");
+      expect(text).toMatch(/pag[i]?nat/);
+      expect(text).not.toMatch(/clears only `under-review`|removes only `under-review`|preserves both verdict keys|both verdict keys' current\/historical assignments survive/);
+    }
+    const docs = await file("docs/delivery-labels.md");
+    for (const term of ["explicit manual", "No verdict is added", "no definition is deleted", "before **each** removal", "all three roles' current/historical names", "not a frozen repository transaction", "earlier PRs may already have been cleaned", "final state read and DELETE", "not fetched by this local command"]) {
+      expect(docs.toLowerCase()).toContain(term.toLowerCase());
+    }
+    for (const name of ["base-labels", "verdict-labels", "label-rename", "labels-default-on"]) {
+      const historical = await file(`docs/plans/${name}.md`);
+      expect(historical).toContain("Historical plan:");
+      expect(historical).toContain("superseded by [labels-clear-on-close]");
+      expect(historical).toContain("current runner contract");
+    }
+    for (const name of await readdir(".github/workflows")) {
+      expect(await file(`.github/workflows/${name}`)).not.toMatch(/labels-sweep|review-label-sweep/);
+    }
+    expect(await file("templates/delivery-caller.yml")).not.toMatch(/labels-sweep|review-label-sweep/);
+  });
+  it("documents protected reference publication, deletions, delay, safety limits and manual recovery", async () => {
+    const docs = await file("docs/delivery-labels.md");
+    for (const term of ["changes.name.from", "Created", "Deleted", "never deletes", "person merges", "pending", "delivery labels-reference --apply", "never labels or main", "last source read and PATCH", "exact reversion", "intermediate names", "idle", "workflow reference and matching `tools_ref`", "`tools_ref` defaults to `main`", "A workflow pin alone does not pin scripts", "pin tooling to the same old revision"]) expect(docs).toContain(term);
+    for (const path of guidance) {
+      const text = (await file(path)).replace(/\s+/g, " ");
       expect(text).toContain("enabled by default");
       expect(text).toContain("DELIVERY_LABELS_ENABLED=false");
       expect(text).toContain("case-insensitive, without whitespace");
       expect(text).toContain("Unset, empty, `true` and any other value");
-      expect(text).toContain("opt-out");
       expect(text).toContain("Manual dry runs stay read-only");
-      expect(text).not.toMatch(/disabled by default|default-disabled|pending maintainer enablement|after enablement/i);
-    }
-    for (const text of [docs, readme]) {
+      expect(text).toContain("tracking `main`");
+      expect(text).toContain("matching `tools_ref`");
       expect(text).toContain("Pull requests write");
       expect(text).toMatch(/no added Issues/i);
-      expect(text).toContain("idle");
-      expect(text).toMatch(/separate (?:crew )?task|separate work/);
     }
     expect(docs).toContain("` false ` does not");
     expect(docs).toContain("No label job is a prerequisite");
-    expect(docs).toMatch(/no time-based/i);
-    expect(docs).toContain("historical PRs");
-    expect(docs).toContain("Pruning additionally needs visibility of both issues and PRs");
   });
-
-  it("documents aligned version pins and each known consumer's adoption path", async () => {
-    const docs = await file("docs/delivery-labels.md");
-    for (const path of ["docs/delivery-labels.md", "README.md", "skills/change-delivery/SKILL.md"]) {
-      const text = await file(path);
-      expect(text).toMatch(/workflow\s+reference/);
-      expect(text).toContain("matching `tools_ref`");
-      expect(text).toContain("tracking `main`");
+  it("keeps display-name literals out of runtime scripts and default pruning separate", async () => {
+    for (const path of ["scripts/repository-labels.mjs", "scripts/review-label-cleanup.mjs", "scripts/review-label-sweep.mjs", "scripts/run-label-automation.mjs", "scripts/reference-labels.mjs", ".github/workflows/delivery.yml", ".github/workflows/reference-labels.yml"]) {
+      const source = await file(path);
+      for (const label of Object.values(bootstrap.labels) as any[]) {
+        for (const name of [label.name, ...label.previousNames]) expect(source).not.toContain(name);
+      }
+      if (!path.endsWith("repository-labels.mjs")) expect(source).not.toMatch(/pruneDefaultLabels|prune-unused-defaults|permission-issues/);
     }
-    expect(docs).toContain("`tools_ref` defaults to `main`");
-    expect(docs).toContain("A workflow pin alone does not pin scripts");
-    expect(docs).toContain("pin tooling to the same old revision");
-    for (const consumer of ["a1", "crew", "herdr-app", "xrbuild", "private workspace", "MyWorkflows"]) {
-      expect(docs).toContain(consumer);
-    }
-    expect(docs).toContain("None of these six consumers needs an update");
-  });
-
-  it("documents separate pruning consent and keeps automation incapable of invoking it", async () => {
     const docs = await file("docs/delivery-labels.md");
     expect(docs).toContain("--apply --prune-unused-defaults");
     expect(docs).toContain("quiet maintenance window");
     expect(docs).toContain("Deleting a label deletes its assignments everywhere");
-    for (const path of ["scripts/run-label-automation.mjs", ".github/workflows/delivery.yml"]) {
-      const source = await file(path);
-      expect(source).not.toContain("pruneDefaultLabels");
-      expect(source).not.toContain("prune-unused-defaults");
-      expect(source).not.toContain("permission-issues");
-    }
+    expect(docs).toContain("Pruning additionally needs visibility of both issues and PRs");
+    expect(docs).toContain("excluded");
     const caller = await file("templates/delivery-caller.yml");
     expect(caller).not.toMatch(/schedule:|review-id|review-start|review-finish|DELIVERY_LABELS_ENABLED/);
   });

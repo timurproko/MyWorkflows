@@ -1,5 +1,9 @@
 # Delivery labels enabled by default
 
+> Historical plan: in-progress-only closure scope and the absence of manual historical recovery below are superseded by [labels-clear-on-close](labels-clear-on-close.md). Current cleanup removes all three managed roles and every historical alias on merged/unmerged closure, with a separately authorized report-first manual sweep for older closed PRs. Default-on/opt-out behavior is unchanged. See [the current runner contract](../delivery-labels.md); historical evidence below is retained.
+
+Historical plan: display names and metadata authority are superseded by [reference-driven renames](label-rename.md). Old names below describe that historical snapshot, not the current runner contract; the default-on policy still applies.
+
 ## Proposal
 
 Make base-label synchronization and closed-pull-request Under review cleanup the default behavior of the shared delivery workflow, without per-repository setup. Retain a single explicit opt-out and all existing safety boundaries from the implementation merged in #25.

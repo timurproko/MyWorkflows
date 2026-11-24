@@ -1,5 +1,9 @@
 # Agent-review verdict labels
 
+> Historical plan: closure-time verdict persistence below is superseded by [labels-clear-on-close](labels-clear-on-close.md). Current policy removes all three managed roles and every historical alias on merged/unmerged closure; older closed PRs have a separately authorized report-first manual sweep. See [the current runner contract](../delivery-labels.md). Historical implementation evidence below is retained, not current guidance.
+
+Historical plan: display names and metadata authority are superseded by [reference-driven renames](label-rename.md). Old names below describe that historical snapshot, not the current runner contract.
+
 ## Proposal
 
 Extend the shared base palette with explicit agent-review verdict labels so a pull request retains its review result after closure. Keep the existing default-on sync and restrict shared closed-event cleanup to Under review; the review-runner implementation remains separate in timurproko/crew pull request #7.

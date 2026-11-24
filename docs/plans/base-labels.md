@@ -1,5 +1,9 @@
 # Base labels and the agent-review label
 
+> Historical plan: closure scope and historical-recovery limits below are superseded by [labels-clear-on-close](labels-clear-on-close.md), and opt-in rollout was superseded by labels-default-on. Current cleanup removes all three managed roles and every historical alias on merged/unmerged closure, with a separately authorized report-first manual sweep for older closed PRs. See [the current runner contract](../delivery-labels.md); historical audit and implementation evidence below is retained.
+
+Historical plan: display names and metadata authority are superseded by [reference-driven renames](label-rename.md). Old names below describe that historical snapshot, not the current runner contract.
+
 ## Proposal
 
 Define the delivery workflow's base labels once in MyWorkflows and synchronize them in the existing reusable workflow. The review runner sets and clears the advisory Under review label directly; an isolated shared-workflow job clears it when a pull request is closed or merged.

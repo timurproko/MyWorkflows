@@ -16,6 +16,18 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
 for that PR, and only with green CI on its current head.
 
+## Ready pull-request refresh
+
+After a merge, the shared job refreshes stale, ready PRs with same-repository heads against the delivery target,
+using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
+not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
+Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
+naming the repository, PR and GitHub reason; independent PRs are still refreshed. Unknown errors, rate limits,
+invalid credentials and denied reads remain failures. The App's permissions are not expanded and no fallback
+token is used. Consumers tracking the shared workflow and tooling at `main` receive this behavior without caller
+edits after merge.
+
 ## Adopting it in a repository
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
@@ -35,37 +47,54 @@ optional override described below.
 
 ## Base labels and agent review
 
-`labels/base.json` centrally defines three robot labels, each with an empty description:
+`labels/base.json` publishes three permanently stable role keys and their editable names/history:
 
-| Key | Name | Color |
-| --- | --- | --- |
-| `under-review` | 🤖 Under review | `840479` |
-| `review-approved` | 🤖 Approved | `1a7f37` |
-| `review-changes-needed` | 🤖 Changes needed | `9a6700` |
+| Key | Initial name | Color | Previous names |
+| --- | --- | --- | --- |
+| `under-review` | 🤖 Review | `840479` | 🤖 Under review |
+| `review-approved` | 🤖 Approved | `1a7f37` | none |
+| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
 
-Names start with U+1F916 and one ordinary space, without a variation selector.
-The existing Delivery workflow syncs all three definitions and removes ONLY Under review on close/merge;
-Approved and Changes needed survive closure as a review record. Both jobs
-are **enabled by default**, with no per-repository setup. The consumer's Actions variable
-`DELIVERY_LABELS_ENABLED=false` opts out of both automatic writers (case-insensitive, without whitespace
-trimming). Unset, empty, `true` and any other value remain enabled. No variable is set automatically.
+Initially each has an empty description; names start with U+1F916 and one ordinary space, without a variation selector.
+The reference is these managed labels on **MyWorkflows' GitHub Labels page**, bound by GitHub id/node id.
+UI edits create a validated manifest-update bot PR; the person merges it through normal protection.
+Created/unmanaged labels are not adopted and deleting a reference never deletes consumers. Future valid names
+may omit the robot prefix. `delivery labels-reference` reports missed-event reconciliation;
+`--apply` publishes a topic PR only, never writes labels or main.
 
-Synchronization happens on each consumer's next delivery event, including after definition changes; idle
-repositories wait. Callers tracking `main` need no edit; version-pinned callers must update both the workflow
-reference and matching `tools_ref` to a revision containing this policy. Defaults and custom labels are never
-deleted automatically. Manual dry runs stay read-only even when opted out. Optional pruning of unused,
-unmodified GitHub defaults requires a separate explicit command and consent.
+Sync and closed-PR cleanup are **enabled by default**. The consumer's `DELIVERY_LABELS_ENABLED=false` opts out
+(case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value remain enabled.
+After the reference PR merges, each consumer syncs on its next delivery event; idle repositories wait.
+Renames use `previousNames` and PATCH `new_name` to preserve existing assignments. When old and new both exist,
+keep the new one, preserve/report the old one and never delete automatically. Reference sync guards unmerged UI drift.
+Callers tracking `main` need no edit; pinned callers must align the workflow reference and matching `tools_ref`.
+Manual dry runs stay read-only even when opted out; optional default pruning needs separate explicit consent
+and excludes managed current/historical names.
 
-At review start, the agent-review runner adds Under review and removes any previous verdict label before
-launching the reviewer. On `APPROVE`, it removes Under review and adds Approved; on `CHANGES NEEDED`, it removes
-Under review and adds Changes needed. Verdicts are mutually exclusive. Failed launch/report, stop, finish,
-observed death or abandonment clear Under review without inventing a verdict. Unrelated labels are preserved.
-The runner uses its signed-in credential; crew integration is a separate task in crew PR #7, not implemented here.
-All three labels are advisory, never a merge gate; absence is not approval, and a retained verdict is not a
-promise that later commits were reviewed. Existing App Pull requests write permission suffices;
-no added Issues grant or caller permission change is needed. Label jobs are isolated from promotion,
-finalization and required checks; missing App rights produce visible warnings, not delivery failures.
-See [opt-out, version pins, permissions and the exact review contract](docs/delivery-labels.md).
+Runners read the version-1 manifest by stable key at each operation from
+`GET /repos/timurproko/MyWorkflows/contents/labels/base.json` with `Accept: application/vnd.github.raw+json`.
+Omitting `ref` resolves the default branch; explicit discovery is equivalent. A configurable source is allowed.
+Warned fallback to the initial names and legacy aliases is allowed on read/validation failure, never silently;
+crew uses one request with a two-second timeout. Crew implementation remains a separate task, retaining crew PR #7's limits.
+At review start, add current `under-review` and clear both verdict keys' current/historical assignments before launching the reviewer.
+On `APPROVE` use current `review-approved`; on `CHANGES NEEDED` use current `review-changes-needed`, clearing review/other-verdict aliases.
+Verdicts are mutually exclusive. Failed launch/report, stop, finish, observed death or abandonment clears only
+in-progress names without inventing a verdict. Closed/merged cleanup removes all three managed roles'
+current/historical assignments, including both verdicts. Unrelated labels are preserved. A reopened PR has no
+robot review label until the next review sets one; cleanup never restores removed assignments.
+All three labels are advisory; absence is not approval, and a retained verdict does not guarantee later commits were reviewed.
+The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
+Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
+Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
+Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
+PR label assignments do not restart shared delivery; callers should also omit `labeled`/`unlabeled` from test
+triggers. The exact crew/herdr-app CI follow-ups and queue limits are in
+[the scheduling guidance](docs/delivery-labels.md#scheduling-and-assignment-only-events).
+Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
+read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
+checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
+uses the signed-in credential and never changes definitions or open PRs. See [manual recovery, reference
+updates, transition/race limits and the exact runner contract](docs/delivery-labels.md).
 
 ## Local setup, once per machine
 
@@ -87,6 +116,8 @@ instead; run `delivery install` again to return to the managed copy.
 | --- | --- |
 | `delivery check-body --body-file <path> --final` | Validate a pull-request body with the rules the bot applies |
 | `delivery labels --repo <owner/name>` | Read-only base-label diff; explicit `--apply` syncs definitions; `--prune-unused-defaults` instead reports defaults eligible for separately authorized pruning |
+| `delivery labels-sweep --repo <owner/name> [--apply]` | Report managed assignments on closed/merged PRs; explicit apply removes them with fresh closure checks, never automatically |
+| `delivery labels-reference [--apply]` | Read-only reconciliation from MyWorkflows' live reference labels; explicit apply publishes a protected manifest PR, never writes labels |
 | `delivery start <type>/<short-name>` | Start, or return to, one task's checkout and print its folder: `.worktrees/<short-name>`, or a pool slot when pooled worktrees are on |
 | `delivery cleanup` | List merged, clean worktrees that can be removed; `--apply` removes them, and returns pool slots to their pool |
 | `delivery finish <worktree>` | Remove one task's worktree and its merged branch; `--force` also discards its uncommitted files, never unmerged commits |
