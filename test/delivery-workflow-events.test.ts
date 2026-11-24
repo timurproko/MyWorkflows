@@ -33,7 +33,7 @@ function enabled(section: string, action: string, eventName = "pull_request_targ
       event_name: eventName,
       event: {
         action, repository: { default_branch: "main" },
-        pull_request: { draft: false, merged: true, base: { ref: "main" }, user: { login: "maintainer" } },
+        pull_request: { state: "open", draft: false, merged: false, base: { ref: "main" }, user: { login: "maintainer" } },
       },
       ...overrides,
     },
@@ -71,10 +71,13 @@ describe("advisory label-sync scheduling", () => {
 });
 
 describe("label-only delivery events", () => {
-  it.each(["labeled", "unlabeled"])("skips every shared job on %s even with a nonstandard caller", async action => {
+  it.each(["labeled", "unlabeled"])("skips every existing delivery job on %s for both PR event types", async action => {
     const workflow = await load(sharedPath);
-    for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
-      expect(enabled(job(workflow, name), action), name).toBe(false);
+    for (const eventName of ["pull_request", "pull_request_target"]) {
+      for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
+        expect(enabled(job(workflow, name), action, eventName), name).toBe(false);
+      }
+      expect(enabled(job(workflow, "review-label-reconciliation"), action, eventName)).toBe(action === "labeled");
     }
   });
 
@@ -86,22 +89,57 @@ describe("label-only delivery events", () => {
   it("retains closure cleanup, merged refresh, manual reconciliation and forwarded workflow completion", async () => {
     const workflow = await load(sharedPath);
     for (const name of ["refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
-      expect(enabled(job(workflow, name), "closed"), name).toBe(true);
+      expect(enabled(job(workflow, name), "closed", "pull_request_target", { event: {
+        action: "closed", repository: { default_branch: "main" }, pull_request: { state: "closed", merged: true, base: { ref: "main" } },
+      } }), name).toBe(true);
     }
     for (const name of ["finalize", "label-sync"]) expect(enabled(job(workflow, name), "", "workflow_dispatch"), name).toBe(true);
     expect(enabled(job(workflow, "refresh"), "completed", "workflow_run")).toBe(true);
     expect(enabled(job(workflow, "check"), "closed")).toBe(false);
   });
 
-  it("keeps assignment events out of the template and self-caller before workflow concurrency is considered", async () => {
+  it("forwards only labeled additions in delivery callers, leaving test subscriptions unchanged", async () => {
     for (const path of ["templates/delivery-caller.yml", ".github/workflows/self-delivery.yml"]) {
       const workflow = await load(path);
       const types = workflow.match(/pull_request_target:\n    types: \[([^\]]+)\]/)?.[1].split(",").map(type => type.trim());
-      expect(types).toEqual(["opened", "synchronize", "ready_for_review", "converted_to_draft", "reopened", "edited", "closed"]);
+      expect(types).toEqual(["opened", "synchronize", "ready_for_review", "converted_to_draft", "reopened", "edited", "closed", "labeled"]);
       expect(workflow).not.toMatch(/^concurrency:/m);
     }
     // Default pull_request actions are opened, synchronize and reopened, not labeled/unlabeled.
     expect(await load(".github/workflows/test.yml")).toMatch(/  pull_request:\n  push:/);
+  });
+
+  it("isolates the advisory reconciliation job with trusted tooling and a scoped token", async () => {
+    const workflow = await load(sharedPath);
+    const section = job(workflow, "review-label-reconciliation");
+    expect(section).toContain("    continue-on-error: true");
+    expect(section).not.toMatch(/^    needs:/m);
+    expect(section).toContain("group: delivery-review-label-reconciliation-${{ github.repository }}-${{ github.event.pull_request.number }}");
+    expect(section).toContain("queue: max");
+    expect(section).toContain("cancel-in-progress: false");
+    expect(section).toContain("repository: timurproko/MyWorkflows");
+    expect(section).toContain("ref: ${{ inputs.tools_ref }}");
+    expect(section).toContain("persist-credentials: false");
+    expect(section).toContain("if: vars.DELIVERY_LABELS_ENABLED != 'false'");
+    expect(section).toContain("permission-pull-requests: write");
+    expect(section).not.toMatch(/permission-(contents|issues|workflows): write/);
+    expect(section).toContain("GH_TOKEN: ${{ steps.review-labels-app.outputs.token }}");
+    expect(section).toContain("LABELS_APP_TOKEN: ${{ steps.review-labels-app.outputs.token }}");
+    expect(section).toContain("LABELS_OPERATION: reconcile");
+    expect(section).not.toMatch(/github.token|head.sha|user.login|sender.login/);
+    for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
+      expect(job(workflow, name)).not.toMatch(/^    needs:.*review-label-reconciliation/m);
+    }
+    expect(await load(".github/protection.json")).not.toContain("Keep only the latest managed review label");
+  });
+
+  it("reconciles only open additions, not closure, merges, dispatch, or other PR actions", async () => {
+    const section = job(await load(sharedPath), "review-label-reconciliation");
+    for (const action of ["opened", "synchronize", "closed", "reopened", "edited", "unlabeled"]) expect(enabled(section, action)).toBe(false);
+    for (const eventName of ["workflow_dispatch", "workflow_run", "label", "push"]) expect(enabled(section, "labeled", eventName)).toBe(false);
+    for (const pull of [{ state: "closed", merged: false }, { state: "closed", merged: true }, { state: "open", merged: true }]) {
+      expect(enabled(section, "labeled", "pull_request_target", { event: { action: "labeled", pull_request: pull } })).toBe(false);
+    }
   });
 
   it("preserves separate repository label-definition events", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import definitions from "./fixtures/bootstrap-labels.json";
 import { latestReviewAssignment, reconcileReviewLabels } from "../scripts/review-label-reconciliation.mjs";
+import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/.repository";
 const review = definitions.labels["under-review"].name;
@@ -38,6 +39,59 @@ function fake({ labels = [review, rework, "keep"], events = [addition(review, 10
 }
 const reconcile = (options = {}) => reconcileReviewLabels({ repository, event: event(), manifest: structuredClone(definitions), enabled: "true", ...options });
 const writes = api => api.mock.calls.filter(([method]) => method !== "GET");
+const environment = (extra = {}) => ({ GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request_target", GITHUB_REPOSITORY: repository,
+  LABELS_APP_TOKEN: "app", GH_TOKEN: "app", LABELS_OPERATION: "reconcile", ...extra });
+const automate = (options = {}) => runLabelAutomation({ environment: environment(), event: event(), manifest: structuredClone(definitions), report: vi.fn(), ...options });
+
+describe("guarded review-label automation runner", () => {
+  it.each(["pull_request", "pull_request_target"])("accepts a labeled %s event and emits an advisory summary", async eventName => {
+    const source = fake();
+    const report = vi.fn();
+    expect((await automate({ ...source, report, environment: environment({ GITHUB_EVENT_NAME: eventName }) })).disposition).toBe("reconciled");
+    expect(report).toHaveBeenCalledWith("Managed review-label open-PR reconciliation: reconciled.");
+  });
+
+  it.each(["false", "False", "FALSE"])("opts out before event reads, API requests or requiring a token: %s", async value => {
+    const api = vi.fn();
+    expect(await automate({ api, event: undefined, environment: environment({ DELIVERY_LABELS_ENABLED: value, GH_TOKEN: undefined, LABELS_APP_TOKEN: undefined }) }))
+      .toEqual({ disposition: "disabled" });
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { GH_TOKEN: "caller" }, { GH_TOKEN: "", LABELS_APP_TOKEN: "" }])("rejects missing or fallback write credentials %j", async overrides => {
+    const api = vi.fn();
+    await expect(automate({ api, environment: environment({ LABELS_APP_TOKEN: undefined, ...overrides }) })).rejects.toThrow("separate delivery App token");
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("recognizes unmanaged names without any label API reads/writes", async () => {
+    const api = vi.fn();
+    expect((await automate({ api, event: event("unrelated") })).disposition).toBe("unmanaged");
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it.each(["workflow_dispatch", "workflow_run", "label", "push"])("rejects reconciliation on %s", async eventName => {
+    const api = vi.fn();
+    await expect(automate({ api, environment: environment({ GITHUB_EVENT_NAME: eventName }) })).rejects.toThrow(/event|operation/);
+    expect(api).not.toHaveBeenCalled();
+  });
+
+  it("rejects non-Actions context and never expands sync/cleanup to pull_request", async () => {
+    for (const extra of [{ GITHUB_ACTIONS: "false" }, { GITHUB_EVENT_NAME: "pull_request", LABELS_OPERATION: "sync" }, { GITHUB_EVENT_NAME: "pull_request", LABELS_OPERATION: "cleanup" }]) {
+      const api = vi.fn();
+      await expect(automate({ api, environment: environment(extra) })).rejects.toThrow("trusted delivery event");
+      expect(api).not.toHaveBeenCalled();
+    }
+  });
+
+  it("reports write denial as a warning independently of code delivery", async () => {
+    const source = fake({ deleteStatus: 403 });
+    const report = vi.fn();
+    expect(await automationMain({ ...source, environment: environment(), event: event(), manifest: definitions, report })).toBe(1);
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("::warning::Delivery label automation failed (HTTP 403)"));
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("No fallback credential was used for writes"));
+  });
+});
 
 describe("latest managed review-label reconciliation", () => {
   it.each(names)("keeps a single added name %s without adding or deleting anything", async name => {

@@ -5,7 +5,7 @@ name: Delivery (this repository)
 # pull request's copy, so a change to the delivery scripts is exercised here by the first pull request after it merges.
 on:
   pull_request_target:
-    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed]
+    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed, labeled]
   workflow_dispatch:
     inputs:
       pr:

@@ -32,6 +32,8 @@ Status: implemented; 49 focused fake-API unit tests pass, including ordering, al
 
 ### 2. An isolated advisory delivery job handles label additions without restarting delivery or tests
 
+Status: implemented; 233 focused reconciliation/runner/cleanup/workflow/self-caller tests pass with pinned dependencies. The new job alone accepts open labeled events; no test workflow is edited.
+
 - Add a dedicated managed-review reconciliation job to the shared workflow and integrate its operation with the existing guarded label-automation runner.
 - Accept only open-PR labeled events, and resolve managed membership in the script from the manifest. Keep all other shared jobs skipped for assignment-only events under both supported PR event names.
 - Serialize per repository/PR using a dedicated concurrency group with `cancel-in-progress: false` and `queue: max`; do not depend on queue execution order for winner selection. Do not add caller-level concurrency or dependencies from required jobs.
