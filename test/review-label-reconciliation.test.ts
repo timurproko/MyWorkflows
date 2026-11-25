@@ -136,6 +136,46 @@ describe("latest managed review-label reconciliation", () => {
     expect(source.assigned).toEqual([review, "keep"]);
   });
 
+  it.each([review, previous])("uses the latest role-wide addition after a rename cycle back to %s", async assignedName => {
+    const renamedName = assignedName === review ? previous : review;
+    const events = [
+      addition(assignedName, 5, "2026-06-10T12:00:05Z"),
+      addition(renamedName, 7, "2026-06-10T12:00:07Z", "unlabeled"),
+      addition(rework, 8, "2026-06-10T12:00:08Z"),
+      addition(renamedName, 10, "2026-06-10T12:00:10Z"),
+    ];
+    // Definitions rename assignments without assignment events. An older exact-name
+    // addition must not mask the newer add under another spelling of the same role.
+    expect(latestReviewAssignment([assignedName, rework], events, definitions)).toMatchObject({ name: assignedName, id: 10 });
+    for (const incoming of [assignedName, rework]) {
+      const source = fake({ labels: [assignedName, rework, "keep"], events });
+      expect((await reconcile({ ...source, event: event(incoming) })).kept).toBe(assignedName);
+      expect(source.assigned).toEqual([assignedName, "keep"]);
+      expect(writes(source.api)).toEqual([["DELETE", `repos/${repository}/issues/61/labels/${encodeURIComponent(rework)}`]]);
+    }
+  });
+
+  it("compares every historical spelling even when the exact name was previously removed", async () => {
+    const manifest = structuredClone(definitions);
+    manifest.labels["under-review"].previousNames.push("Oldest reading");
+    const events = [addition(review, 5), addition(review, 6, undefined, "unlabeled"), addition(rework, 8), addition(previous, 9), addition("Oldest reading", 10)];
+    expect(latestReviewAssignment([review, rework], events, manifest)).toMatchObject({ name: review, id: 10 });
+    const source = fake({ events });
+    expect((await reconcile({ ...source, manifest })).kept).toBe(review);
+    expect(source.assigned).toEqual([review, "keep"]);
+  });
+
+  it("fails closed with a warning when a newer alias removal makes assignment identity ambiguous", async () => {
+    const events = [addition(review, 5), addition(rework, 8), addition(previous, 10, undefined, "unlabeled")];
+    const source = fake({ events });
+    await expect(reconcile(source)).rejects.toThrow("confirmed addition");
+    expect(writes(source.api)).toEqual([]);
+    const report = vi.fn();
+    expect(await automationMain({ ...source, environment: environment(), event: event(), manifest: definitions, report })).toBe(1);
+    expect(report).toHaveBeenCalledWith(expect.stringContaining("::warning::Delivery label automation failed"));
+    expect(writes(source.api)).toEqual([]);
+  });
+
   it("never resurrects a newer label removed by a person", async () => {
     const source = fake({ labels: [review, approved, "keep"], events: [addition(review, 10), addition(approved, 20), addition(rework, 30), addition(rework, 40, undefined, "unlabeled")] });
     await reconcile({ ...source, event: event(rework) });

@@ -26,9 +26,11 @@ export function latestReviewAssignment(assigned, events, manifest) {
   }
   const candidates = assigned.map(name => {
     let entry = latest.get(name);
-    // Definition sync can rename an assignment without a new labeled event. History may
-    // retain its previous spelling. Only resolve that ambiguity for a single assigned alias.
-    if (!entry && assigned.filter(other => role(other) === role(name)).length === 1) entry = byRole.get(role(name));
+    // A rename cycle can leave old exact-name history beside a newer alias event.
+    // With one assigned name for this role, always compare its entire name history;
+    // an older exact entry must not mask a newer alias addition (or removal).
+    // Coexisting aliases need their own histories to distinguish their assignments.
+    if (assigned.filter(other => role(other) === role(name)).length === 1) entry = byRole.get(role(name));
     if (!entry || entry.event !== "labeled") throw new Error("current assignment has no confirmed addition in label history; retry");
     return { name, id: entry.id, time: entry.time };
   });

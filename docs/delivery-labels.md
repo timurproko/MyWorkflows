@@ -163,9 +163,10 @@ unmanaged additions; closed/merged PRs are no-ops owned by clear-on-close cleanu
 When multiple managed names remain, paginate `GET /repos/{owner}/{repo}/issues/{pr}/events`. Select the latest
 applicable managed `labeled` addition by its assignment event `created_at`, with numeric event-id ordering for
 equal timestamps. Neither label-definition creation timestamps nor run start/queue order choose the winner.
-Current assignments and later `unlabeled` history exclude removed labels; no assignment is restored. A single
-assigned role renamed by definition sync can resolve history through its aliases; ambiguous/missing history fails
-closed instead of guessing. Preserve the winning exact current/historical name and delete only competing managed
+Current assignments and later `unlabeled` history exclude removed labels; no assignment is restored. For a role
+with one assigned name, always compare the current name and every historical alias together, even when older
+exact-name history exists: a rename cycle must not hide a newer alias addition or removal. Coexisting assigned
+aliases need distinct exact-name histories; ambiguous/missing history fails closed instead of guessing. Preserve the winning exact current/historical name and delete only competing managed
 assignments, even if two aliases of one role coexist. Never replace the entire label set or change definitions.
 
 The dedicated per-repository/PR `delivery-review-label-reconciliation` concurrency group uses `queue: max` and
