@@ -1,18 +1,17 @@
-import { labelApi, labelNames, loadBaseLabels, validateRepository } from "./repository-labels.mjs";
+import { labelApi, loadBaseLabels, validateRepository } from "./repository-labels.mjs";
 import { managedReviewNames } from "./review-label-cleanup.mjs";
 
-const roles = ["under-review", "review-approved", "review-changes-needed"];
 const later = (a, b) => a.time - b.time || a.id - b.id;
 
 /** Assignment timestamps belong to issue events, NOT the label definition or workflow run. */
 export function latestReviewAssignment(assigned, events, manifest) {
   const names = managedReviewNames(manifest);
-  const role = name => roles.find(key => labelNames(manifest.labels[key]).includes(name));
-  const latest = new Map(), byRole = new Map(), ids = new Set();
+  const latest = new Map(), ids = new Set();
   for (const event of events) {
-    if (!["labeled", "unlabeled"].includes(event?.event)) continue;
+    // Fresh assignments already tell us what remains; removals never rank survivors.
+    if (event?.event !== "labeled") continue;
     if (typeof event.label?.name !== "string") throw new Error("invalid label event name");
-    if (!names.includes(event.label.name)) continue;
+    if (!names.includes(event.label.name) || !assigned.includes(event.label.name)) continue;
     const time = Date.parse(event.created_at);
     if (!Number.isSafeInteger(event.id) || event.id < 1 || ids.has(event.id)
       || typeof event.created_at !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/.test(event.created_at) || !Number.isFinite(time)) {
@@ -20,19 +19,14 @@ export function latestReviewAssignment(assigned, events, manifest) {
     }
     ids.add(event.id);
     const entry = { ...event, time };
-    for (const [map, key] of [[latest, event.label.name], [byRole, role(event.label.name)]]) {
-      if (!map.has(key) || later(entry, map.get(key)) > 0) map.set(key, entry);
-    }
+    if (!latest.has(event.label.name) || later(entry, latest.get(event.label.name)) > 0) latest.set(event.label.name, entry);
   }
+  // A lone missing addition is explicitly oldest. Multiple unknown ages are ambiguous:
+  // refuse the whole snapshot before any write instead of inventing an ordering.
+  if (assigned.filter(name => !latest.has(name)).length > 1) throw new Error("multiple assigned names lack labeled history; retry");
   const candidates = assigned.map(name => {
-    let entry = latest.get(name);
-    // A rename cycle can leave old exact-name history beside a newer alias event.
-    // With one assigned name for this role, always compare its entire name history;
-    // an older exact entry must not mask a newer alias addition (or removal).
-    // Coexisting aliases need their own histories to distinguish their assignments.
-    if (assigned.filter(other => role(other) === role(name)).length === 1) entry = byRole.get(role(name));
-    if (!entry || entry.event !== "labeled") throw new Error("current assignment has no confirmed addition in label history; retry");
-    return { name, id: entry.id, time: entry.time };
+    const entry = latest.get(name);
+    return { name, id: entry?.id ?? 0, time: entry?.time ?? -Infinity };
   });
   return candidates.sort(later).at(-1);
 }

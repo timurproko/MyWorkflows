@@ -115,6 +115,11 @@ describe("stable reference-driven label and runner contract", () => {
     }
     expect(docs).toContain("+    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed, labeled]");
     expect(docs).toContain("`.github/workflows/self-delivery.yml`");
+    const flattened = docs.replace(/\s+/g, " ");
+    for (const term of ["latest exact-name `labeled` event", "Ignore `unlabeled` events entirely", "One missing addition is oldest", "two or more assigned names lack", "warning and no writes", "Do not borrow history across aliases", "including aliases of the winner's own role", "re-runs are idempotent"]) {
+      expect(flattened).toContain(term);
+    }
+    expect(flattened).not.toContain("always compare the current name and every historical alias together");
     for (const term of ["zero consumer edits are impossible", "created_at", "issues/{pr}/events", "twice reads", "queue: max", "100 pending", "no assignment is restored", "independently of delivery", "no other repository is edited"]) {
       expect(docs.toLowerCase()).toContain(term.toLowerCase());
     }

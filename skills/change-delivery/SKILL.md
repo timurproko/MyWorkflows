@@ -199,8 +199,10 @@ Do not run it or any live label apply/prune without separate named-repository au
   Implementation approval never authorizes variables, permissions, pruning or live label writes.
 
 The shared advisory `review-label-reconciliation` job also enforces open-PR exclusivity, whoever adds a managed
-current/historical name, bot or person. It reads fresh assignments and issue-event `created_at` timestamps to keep
-the latest managed addition; event-id ordering breaks equal-timestamp ties independently of job execution order.
+current/historical name, bot or person. It reads fresh assignments and ranks each exact assigned name by its latest
+`labeled` event's `created_at` timestamp; event-id ordering breaks ties between equal timestamps independently of job execution order.
+Ignore `unlabeled` events entirely when choosing the survivor. One assigned name missing an addition is oldest;
+two or more missing additions fail closed with a warning and no writes. Do not borrow another alias's history.
 It only removes conflicting managed assignments, never adds/restores labels or changes unrelated labels.
 Closed/merged PRs are no-ops; closure cleanup owns them. The existing opt-out applies before token minting or API reads.
 The per-PR multi-pending queue serializes this writer; history delays/API failures, queue overflow/cancellation and

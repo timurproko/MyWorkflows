@@ -160,20 +160,25 @@ manifest, including every `previousNames` alias. Bot and person additions use th
 identity, read current open state and paginate current assignments rather than trusting webhook labels. Ignore
 unmanaged additions; closed/merged PRs are no-ops owned by clear-on-close cleanup.
 
-When multiple managed names remain, paginate `GET /repos/{owner}/{repo}/issues/{pr}/events`. Select the latest
-applicable managed `labeled` addition by its assignment event `created_at`, with numeric event-id ordering for
-equal timestamps. Neither label-definition creation timestamps nor run start/queue order choose the winner.
-Current assignments and later `unlabeled` history exclude removed labels; no assignment is restored. For a role
-with one assigned name, always compare the current name and every historical alias together, even when older
-exact-name history exists: a rename cycle must not hide a newer alias addition or removal. Coexisting assigned
-aliases need distinct exact-name histories; ambiguous/missing history fails closed instead of guessing. Preserve the winning exact current/historical name and delete only competing managed
-assignments, even if two aliases of one role coexist. Never replace the entire label set or change definitions.
+When multiple managed names remain, paginate `GET /repos/{owner}/{repo}/issues/{pr}/events`. For each currently
+assigned managed name, find its latest exact-name `labeled` event. The assigned name with the latest `created_at`
+timestamp wins, with numeric event-id ordering for equal timestamps. Neither label-definition creation timestamps
+nor run start/queue order choose the winner. Ignore `unlabeled` events entirely when ranking survivors: the fresh
+assignment snapshot already excludes removed names. No assignment is restored.
+
+One missing addition is oldest; if two or more assigned names lack `labeled` history, fail closed with a visible
+warning and no writes. API errors, malformed labeled-event ordering and pagination failures remain errors, not
+missing history. Do not borrow history across aliases or infer identities across definition renames: after a rename
+cycle, rank the surviving exact spelling's additions, even if another spelling has a newer addition. This deliberately
+supersedes the earlier role-wide rename-history policy. Preserve the winning current/historical assignment and delete
+every other assigned managed name, including aliases of the winner's own role. Fresh reads before each DELETE allow
+one run to converge to a single survivor; re-runs are idempotent. Never replace the entire label set or change definitions.
 
 The dedicated per-repository/PR `delivery-review-label-reconciliation` concurrency group uses `queue: max` and
 `cancel-in-progress: false`. Jobs serialize, but ordering remains independent of execution order because each
 reads fresh history. Before each individual deletion the script twice reads current assignments, latest history
 and open state, retries changed snapshots within a bound, and rescans after writes. DELETE 404s require confirmed
-PR access and exact assignment absence. Missing App rights, malformed/incomplete history, denied reads or bounded
+PR access and exact assignment absence. Missing App rights, malformed history, multiple missing additions, denied reads or bounded
 churn produce visible advisory warnings/summaries; required delivery jobs are independent. The existing opt-out
 occurs before token minting or label API reads and no fallback credential is used for writes.
 

@@ -89,8 +89,9 @@ Existing App Pull requests write permission suffices; no added Issues grant or c
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
 Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
 Open-PR additions run only the advisory `review-label-reconciliation` job, not the other delivery jobs.
-It keeps the latest managed addition from fresh assignments and issue-event `created_at` timestamps, with event-id
-ordering for equal timestamps, regardless of bot or person; current/historical aliases participate equally.
+It ranks each currently assigned managed name by its latest exact-name `labeled` event's `created_at` timestamp,
+with event-id ordering for equal timestamps, regardless of bot or person; current/historical aliases participate equally.
+`unlabeled` events never rank survivors. One missing addition is oldest; two or more missing additions warn without writes.
 Closed/merged PRs are no-ops for this writer. Per-PR serialization uses a multi-pending queue, while fresh history
 prevents an older queued event winning. API failures, history delays, queue cancellation and the non-atomic
 read/DELETE race remain best-effort limits; no labels are added or restored.
