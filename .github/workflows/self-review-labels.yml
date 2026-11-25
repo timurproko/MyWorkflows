@@ -1,0 +1,17 @@
+# Local self-caller; trusted pull_request_target uses the default-branch reusable workflow.
+name: Review labels (this repository)
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-labels:
+    uses: ./.github/workflows/review-labels.yml
+    secrets:
+      app_id: ${{ vars.DELIVERY_BOT_APP_ID }}
+      app_private_key: ${{ secrets.DELIVERY_BOT_PRIVATE_KEY }}

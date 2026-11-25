@@ -235,55 +235,6 @@ jobs:
           LABELS_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
         run: node scripts/run-label-automation.mjs
 
-  review-label-reconciliation:
-    name: Keep only the latest managed review label
-    # Only assignment additions run this advisory job; all code-delivery jobs skip them.
-    # Editable current/historical managed names are resolved in trusted tooling, not YAML.
-    if: >-
-      (github.event_name == 'pull_request_target' || github.event_name == 'pull_request')
-      && github.event.action == 'labeled' && github.event.pull_request.state == 'open'
-      && github.event.pull_request.merged != true
-    continue-on-error: true
-    permissions:
-      contents: read
-      pull-requests: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    concurrency:
-      group: delivery-review-label-reconciliation-${{ github.repository }}-${{ github.event.pull_request.number }}
-      queue: max
-      cancel-in-progress: false
-    steps:
-      - name: Check out trusted delivery tooling
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: timurproko/MyWorkflows
-          ref: ${{ inputs.tools_ref }}
-          persist-credentials: false
-
-      - name: Set up Node
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-
-      - name: Mint a separate reconciliation App token unless opted out
-        id: review-labels-app
-        if: vars.DELIVERY_LABELS_ENABLED != 'false'
-        continue-on-error: true
-        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
-        with:
-          app-id: ${{ secrets.app_id }}
-          private-key: ${{ secrets.app_private_key }}
-          permission-pull-requests: write
-
-      - name: Reconcile managed additions or report opt-out
-        env:
-          GH_TOKEN: ${{ steps.review-labels-app.outputs.token }}
-          LABELS_APP_TOKEN: ${{ steps.review-labels-app.outputs.token }}
-          DELIVERY_LABELS_ENABLED: ${{ vars.DELIVERY_LABELS_ENABLED }}
-          LABELS_OPERATION: reconcile
-        run: node scripts/run-label-automation.mjs
-
   review-label-cleanup:
     name: Clear the closed pull request's managed review labels
     if: github.event_name == 'pull_request_target' && github.event.action == 'closed'

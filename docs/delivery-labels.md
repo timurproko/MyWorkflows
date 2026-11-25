@@ -91,7 +91,7 @@ Each consumer receives a changed manifest on its **next forwarded delivery event
 
 Renaming preserves the GitHub label id and existing issue/PR assignments. If old and new both exist, the new one wins, the old one is left alone and reported; assignments are not merged automatically. Report mode shows each planned rename and conflict with zero mutation. Sync never deletes definitions or directly modifies assignments. Removed manifest entries become unmanaged. GitHub write payloads contain only the endpoint's supported fields, not reference metadata/history. Permission/API failures remain visible warnings and summaries, independently of promotion, finalization and the Delivery check. No label job is a prerequisite of required delivery jobs.
 
-Definition sync needs no caller edit for callers tracking `main`. Open-PR exclusivity separately requires the `labeled` subscription described below. Version-pinned callers must update the workflow reference and matching `tools_ref` to the same reviewed revision; `tools_ref` defaults to `main`. A workflow pin alone does not pin scripts: pin tooling to the same old revision until upgrading both together. A previous read-only snapshot found a1, crew, herdr-app, xrbuild and its private workspace tracking main with default tooling; MyWorkflows calls its local workflow. None of these six consumers needs an update for a moving-main definition-sync rollout; this is not a maintained inventory or a promise of automatic label-event subscription.
+Definition sync needs no caller edit for callers tracking `main`. Open-PR exclusivity separately requires the tiny label-only caller described below, not edits to delivery triggers. Version-pinned callers must update the workflow reference and matching `tools_ref` to the same reviewed revision; `tools_ref` defaults to `main`. A workflow pin alone does not pin scripts: pin tooling to the same old revision until upgrading both together. A previous read-only snapshot found a1, crew, herdr-app, xrbuild and its private workspace tracking main with default tooling; MyWorkflows calls its local workflow. None of these six consumers needs an update for a moving-main definition-sync rollout; this is not a maintained inventory or a promise of automatic label-event subscription.
 
 ## Scheduling and assignment-only events
 
@@ -104,42 +104,75 @@ whole-run cancellation remain limits. This is not a guarantee against every poss
 See [GitHub's concurrency semantics](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
 
 Review-label **assignments** do not change source, implementation bodies, readiness or label definitions.
-Only the new advisory `review-label-reconciliation` job runs on open `pull_request`/`pull_request_target: labeled`
-events. Shared finalization, Delivery check, label-sync, refresh, branch cleanup and closed-review cleanup all
-skip assignment-only events, including nonstandard callers forwarding `unlabeled`. No new required check or
-job dependency is introduced. Unmanaged additions are no-ops after manifest resolution; editable names and
+Only the advisory `review-label-reconciliation` job in its own reusable `.github/workflows/review-labels.yml`
+runs on open label additions. Its separate caller subscribes to `pull_request_target: [labeled]`. Delivery and test
+callers do not subscribe to either assignment action. Job guards in delivery are defensive only: **skipped required
+checks satisfy GitHub protection**, so calling the delivery workflow and skipping its jobs is not isolation.
+The label workflow never contains or calls delivery/test jobs, and publishes only the distinctly named non-required
+`review-labels / Reconcile managed review labels (advisory)` check. No new required check or dependency is introduced. Unmanaged additions are no-ops after manifest resolution; editable names and
 `previousNames` cannot be hard-coded in the YAML guard. The separate reference workflow still receives repository
 `label: [edited, created, deleted]` events, which concern definition changes rather than PR assignments.
 
 ### Exact caller rollout and test-workflow audit
 
-MyWorkflows #36 deliberately removed assignment events from callers. A reusable workflow cannot add subscriptions
-to its caller, so zero consumer edits are impossible for callers still omitting `labeled`. Append **only `labeled`**
-to `on.pull_request_target.types` in the delivery caller, leaving every other trigger, permission and job unchanged.
-All seven inspected callers have the same old line; use this exact one-line replacement in each listed file:
+MyWorkflows #36 deliberately removed assignment events from delivery callers. Keep that exclusion: forwarding
+labels to delivery could replace a failed `delivery / Delivery check` with a newer skipped result on the same head.
+A reusable workflow cannot add subscriptions to its caller, so zero consumer edits are impossible. Instead,
+**add one small caller file**, separate from delivery and tests. Copy `templates/review-labels-caller.yml` to
+`.github/workflows/review-labels.yml` in each external consumer with this exact content. It forwards only `labeled`:
 
-```diff
--    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed]
-+    types: [opened, synchronize, ready_for_review, converted_to_draft, reopened, edited, closed, labeled]
+<!-- review-labels-caller:start -->
+```yaml
+# Copy to .github/workflows/review-labels.yml; keep delivery/test callers free of label events.
+name: Review labels
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  review-labels:
+    uses: timurproko/MyWorkflows/.github/workflows/review-labels.yml@main
+    secrets:
+      app_id: ${{ vars.DELIVERY_BOT_APP_ID }}
+      app_private_key: ${{ secrets.DELIVERY_BOT_PRIVATE_KEY }}
 ```
 
-| Repository | Delivery caller | Test workflow and label-event status at read-only audit |
+| Repository | Add caller file | Test workflow and label-event status at read-only audit |
 | --- | --- | --- |
-| `timurproko/herdr-app` | `.github/workflows/delivery.yml` | `tests.yml`: both assignment actions excluded |
-| `timurproko/crew` | `.github/workflows/delivery.yml` | `tests.yml`: both assignment actions excluded |
-| `timurproko/a1` | `.github/workflows/delivery.yml` | `ci.yml`: explicit PR types exclude both; other inspected test entry points do not subscribe to label events or Delivery completion |
-| `timurproko/xrbuild` | `.github/workflows/delivery.yml` | `ci.yml`: **already includes both `labeled` and `unlabeled`**; exception below |
-| `timurproko/.xrbuild` | `.github/workflows/delivery.yml` | `ci.yml`: both assignment actions excluded |
-| `timurproko/MyConfigs` | `.github/workflows/delivery.yml` | `ci.yml`: both assignment actions excluded |
-| `timurproko/MyWorkflows` | `.github/workflows/self-delivery.yml` | `test.yml`: default PR actions exclude both |
+| `timurproko/herdr-app` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
+| `timurproko/crew` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
+| `timurproko/a1` | `.github/workflows/review-labels.yml` | `ci.yml`: explicit PR types exclude both; other inspected test entry points do not subscribe to label events or Delivery completion |
+| `timurproko/xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: **already includes both `labeled` and `unlabeled`**; exception below |
+| `timurproko/.xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
+| `timurproko/MyConfigs` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
+| `timurproko/MyWorkflows` | `.github/workflows/self-review-labels.yml` | `test.yml`: default PR actions exclude both |
 
-The template and MyWorkflows self-caller are updated here; no other repository is edited. Other callers tracking
-`main` receive the new shared job after merge but still need that event subscription; pinned callers align the
-workflow reference and matching `tools_ref` too. Callers already forwarding `labeled` need no subscription edit.
-Do not add `unlabeled` to delivery, and keep both assignment actions excluded from test triggers.
+MyWorkflows' self-caller is included here with the same settings except its display name and local
+`uses: ./.github/workflows/review-labels.yml`. Delivery template/self-callers are reverted to their original
+label-free event lists; no other repository is edited. If the earlier proposed delivery-trigger edit was adopted,
+remove `labeled`/`unlabeled` there as well; do not retain it alongside the separate caller. Callers tracking `main`
+use the new reusable file after merge; pinned callers align its workflow reference and matching `tools_ref` too.
+Keep both label actions excluded from delivery and test triggers.
 
-Adding a delivery-only subscription cannot itself subscribe another workflow to events, and no inspected test
-workflow consumes Delivery completion. Thus it does not start tests in the six label-isolated consumers. However,
+**Actions-policy prerequisite:** public repositories with a restrictive workflow-path allowlist must also authorize
+the new caller path for `pull_request_target` or GitHub will block it. Built-in delivery protection defaults remain
+unchanged; label-only adoption is explicit. In a consumer with an existing `.github/protection.json`, add only
+`.github/workflows/review-labels.yml` to its existing `workflow-events.workflows` array, retaining all declarations,
+required checks and events. Where no override exists, first obtain its current declarations through read-only
+`delivery protect --repo owner/name`, then publish a reviewed override preserving them plus the new caller path.
+MyWorkflows' own override declares `.github/workflows/self-review-labels.yml` in addition to its existing self-delivery
+path; no required checks or App grants change. Declaration alone does not apply the live policy. After merge,
+inspect a fresh protection report and obtain separate named-repository authorization before
+`delivery protect --repo owner/name --apply --allow-rule-changes`. This task does not apply policies, change live
+permissions, or claim the new self-caller is live before its path is authorized.
+
+Adding this separate workflow cannot subscribe tests or emit skipped delivery/test checks, and no inspected test
+workflow consumes Review labels or Delivery completion. Thus it does not start tests in the six label-isolated consumers. However,
 xrbuild's existing `.github/workflows/ci.yml` line 10 is:
 
 ```yaml
@@ -239,4 +272,4 @@ Pruning additionally needs visibility of both issues and PRs, including closed/m
 
 All label listing, sync, usage/pruning, manual sweep and closed-event cleanup share `validateRepository` in `scripts/repository-labels.mjs`. Both CLI repo flag forms work. Owners are 1–39 ASCII letters/digits or single separating hyphens, without leading/trailing/consecutive hyphens. Repository names are 1–100 ASCII letters/digits, hyphens, underscores or dots, except exactly `.` or `..`. Dotted/leading-dot names are accepted unchanged; slash extras, whitespace, URLs, percent escapes and query/fragment syntax are rejected, without trimming or stripping `.git`.
 
-Other delivery/protection identity parsers were audited previously and already accept leading dots; tightening their broader owner/length rules is a separate follow-up, unchanged here. The exclusivity addition changes only the labeled-event subscription in template/self-callers; it does not alter consumer identity parsing, protection or workflow permission grants.
+Other delivery/protection identity parsers were audited previously and already accept leading dots; tightening their broader owner/length rules is a separate follow-up, unchanged here. The exclusivity addition uses a separate label-only caller and declares its path in MyWorkflows' own Actions-policy override; it does not change required checks, built-in protection defaults, consumer identity parsing or App permission grants. No live policy is applied.

@@ -27,7 +27,7 @@ describe("this repository's own delivery", () => {
       .toEqual(["Delivery tooling tests", DELIVERY_CHECK]);
     expect(rules.find(rule => rule.type === "pull_request").parameters.allowed_merge_methods).toEqual(["squash"]);
     const policy = buildEventPolicy(declared.find(item => item.kind === "workflow-events"));
-    expect(policy.conditions.workflow_path.include).toEqual([".github/workflows/self-delivery.yml"]);
+    expect(policy.conditions.workflow_path.include).toEqual([".github/workflows/self-delivery.yml", ".github/workflows/self-review-labels.yml"]);
     expect(policy.rules[0].parameters.allowed_events).toEqual(["pull_request_target", "workflow_dispatch"]);
   });
 });

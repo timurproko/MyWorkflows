@@ -198,7 +198,7 @@ Do not run it or any live label apply/prune without separate named-repository au
   Optional default pruning excludes managed current/historical names and needs separate explicit consent.
   Implementation approval never authorizes variables, permissions, pruning or live label writes.
 
-The shared advisory `review-label-reconciliation` job also enforces open-PR exclusivity, whoever adds a managed
+The separate reusable `.github/workflows/review-labels.yml` advisory `review-label-reconciliation` job enforces open-PR exclusivity, whoever adds a managed
 current/historical name, bot or person. It reads fresh assignments and ranks each exact assigned name by its latest
 `labeled` event's `created_at` timestamp; event-id ordering breaks ties between equal timestamps independently of job execution order.
 Ignore `unlabeled` events entirely when choosing the survivor. One assigned name missing an addition is oldest;
@@ -207,11 +207,13 @@ It only removes conflicting managed assignments, never adds/restores labels or c
 Closed/merged PRs are no-ops; closure cleanup owns them. The existing opt-out applies before token minting or API reads.
 The per-PR multi-pending queue serializes this writer; history delays/API failures, queue overflow/cancellation and
 the non-atomic read/DELETE race remain best-effort limits, not a cross-controller lock or timed recovery guarantee.
-Delivery callers must append only `labeled` to their existing PR event types; a reusable workflow cannot subscribe
-on their behalf. This runs only the reconciliation job, not promotion/finalization or required delivery checks.
-Do not add `unlabeled` or change TEST workflows: keep both assignment actions excluded from test triggers.
-The seven-consumer audit and exact caller edits are in `docs/delivery-labels.md`; xrbuild's existing CI subscription
-to both label actions needs a separately authorized consumer fix before claiming test isolation there.
+Adopt the separate `templates/review-labels-caller.yml` as `.github/workflows/review-labels.yml`, triggered by
+only `labeled`, and keep both label actions out of delivery callers and test triggers. A skipped required job can
+satisfy GitHub protection and overwrite a failed gate: label runs must never call delivery/test workflows, even
+behind a job-level skip. Only the distinct non-required `review-labels / Reconcile managed review labels (advisory)`
+check is published. Public repositories also authorize the new caller path in their Actions-policy allowlist;
+no policy change or apply is automatic. See `docs/delivery-labels.md` for exact caller files and named-repository
+consent requirements. xrbuild's existing CI label subscription needs a separate consumer fix for test isolation.
 
 Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
 assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository

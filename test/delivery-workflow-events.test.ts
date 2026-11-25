@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const load = async (path: string) => (await readFile(path, "utf8")).replace(/\r\n/g, "\n");
 const sharedPath = ".github/workflows/delivery.yml";
+const labelsPath = ".github/workflows/review-labels.yml";
 
 function job(workflow: string, name: string): string {
   const start = workflow.indexOf(`\n  ${name}:\n`);
@@ -77,7 +78,7 @@ describe("label-only delivery events", () => {
       for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
         expect(enabled(job(workflow, name), action, eventName), name).toBe(false);
       }
-      expect(enabled(job(workflow, "review-label-reconciliation"), action, eventName)).toBe(action === "labeled");
+      expect(enabled(job(await load(labelsPath), "review-label-reconciliation"), action, eventName)).toBe(action === "labeled");
     }
   });
 
@@ -98,11 +99,11 @@ describe("label-only delivery events", () => {
     expect(enabled(job(workflow, "check"), "closed")).toBe(false);
   });
 
-  it("forwards only labeled additions in delivery callers, leaving test subscriptions unchanged", async () => {
+  it("keeps delivery callers free of label actions so they cannot publish skipped required checks", async () => {
     for (const path of ["templates/delivery-caller.yml", ".github/workflows/self-delivery.yml"]) {
       const workflow = await load(path);
       const types = workflow.match(/pull_request_target:\n    types: \[([^\]]+)\]/)?.[1].split(",").map(type => type.trim());
-      expect(types).toEqual(["opened", "synchronize", "ready_for_review", "converted_to_draft", "reopened", "edited", "closed", "labeled"]);
+      expect(types).toEqual(["opened", "synchronize", "ready_for_review", "converted_to_draft", "reopened", "edited", "closed"]);
       expect(workflow).not.toMatch(/^concurrency:/m);
     }
     // Default pull_request actions are opened, synchronize and reopened, not labeled/unlabeled.
@@ -111,7 +112,11 @@ describe("label-only delivery events", () => {
 
   it("isolates the advisory reconciliation job with trusted tooling and a scoped token", async () => {
     const workflow = await load(sharedPath);
-    const section = job(workflow, "review-label-reconciliation");
+    const labels = await load(labelsPath);
+    const section = job(labels, "review-label-reconciliation");
+    expect(workflow).not.toContain("review-label-reconciliation:");
+    expect(workflow).not.toContain("review-labels.yml");
+    expect(labels.match(/^  [a-z][\w-]*:/gm)).toEqual(["  workflow_call:", "  contents:", "  review-label-reconciliation:"]);
     expect(section).toContain("    continue-on-error: true");
     expect(section).not.toMatch(/^    needs:/m);
     expect(section).toContain("group: delivery-review-label-reconciliation-${{ github.repository }}-${{ github.event.pull_request.number }}");
@@ -130,11 +135,11 @@ describe("label-only delivery events", () => {
     for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
       expect(job(workflow, name)).not.toMatch(/^    needs:.*review-label-reconciliation/m);
     }
-    expect(await load(".github/protection.json")).not.toContain("Keep only the latest managed review label");
+    expect(await load(".github/protection.json")).not.toContain("Reconcile managed review labels (advisory)");
   });
 
   it("reconciles only open additions, not closure, merges, dispatch, or other PR actions", async () => {
-    const section = job(await load(sharedPath), "review-label-reconciliation");
+    const section = job(await load(labelsPath), "review-label-reconciliation");
     for (const action of ["opened", "synchronize", "closed", "reopened", "edited", "unlabeled"]) expect(enabled(section, action)).toBe(false);
     for (const eventName of ["workflow_dispatch", "workflow_run", "label", "push"]) expect(enabled(section, "labeled", eventName)).toBe(false);
     for (const pull of [{ state: "closed", merged: false }, { state: "closed", merged: true }, { state: "open", merged: true }]) {
