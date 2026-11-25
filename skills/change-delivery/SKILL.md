@@ -144,7 +144,7 @@ when every outcome is ticked and the body is valid, and there is nothing to fina
 ### Final agent review labels
 
 Delivery labels are enabled by default on the next forwarded delivery event, without per-repository setup.
-The calling repository's `DELIVERY_LABELS_ENABLED=false` opts out of both automatic writers (case-insensitive, without whitespace
+The calling repository's `DELIVERY_LABELS_ENABLED=false` opts out of all three automatic writers (case-insensitive, without whitespace
 trimming). Unset, empty, `true` and any other value remain enabled. Do not create or change review labels when opted out.
 `labels/base.json` publishes version 1 with three permanently stable role keys, editable names and `previousNames` arrays:
 
@@ -192,11 +192,28 @@ Do not run it or any live label apply/prune without separate named-repository au
   When old and new both exist, keep the new definition, retain/report the old one and never delete automatically.
   Reference snapshot/pending-PR guards prevent ordinary sync from overwriting unmerged UI drift; GitHub has no
   atomic read/PATCH guard. Initial exact-snapshot reversion before its event is observed remains a bootstrap race.
-- Callers tracking `main` need no edit; idle repositories wait. Pinned callers must align the workflow reference
+- Definition sync needs no caller edit for callers tracking `main`; idle repositories wait. Pinned callers must align the workflow reference
   and matching `tools_ref`. Existing App Pull requests write suffices; no added Issues grant is needed.
   Missing rights warn independently of promotion/finalization or required checks. Manual dry runs stay read-only.
   Optional default pruning excludes managed current/historical names and needs separate explicit consent.
   Implementation approval never authorizes variables, permissions, pruning or live label writes.
+
+The separate reusable `.github/workflows/review-labels.yml` advisory `review-label-reconciliation` job enforces open-PR exclusivity, whoever adds a managed
+current/historical name, bot or person. It reads fresh assignments and ranks each exact assigned name by its latest
+`labeled` event's `created_at` timestamp; event-id ordering breaks ties between equal timestamps independently of job execution order.
+Ignore `unlabeled` events entirely when choosing the survivor. One assigned name missing an addition is oldest;
+two or more missing additions fail closed with a warning and no writes. Do not borrow another alias's history.
+It only removes conflicting managed assignments, never adds/restores labels or changes unrelated labels.
+Closed/merged PRs are no-ops; closure cleanup owns them. The existing opt-out applies before token minting or API reads.
+The per-PR multi-pending queue serializes this writer; history delays/API failures, queue overflow/cancellation and
+the non-atomic read/DELETE race remain best-effort limits, not a cross-controller lock or timed recovery guarantee.
+Adopt the separate `templates/review-labels-caller.yml` as `.github/workflows/review-labels.yml`, triggered by
+only `labeled`, and keep both label actions out of delivery callers and test triggers. A skipped required job can
+satisfy GitHub protection and overwrite a failed gate: label runs must never call delivery/test workflows, even
+behind a job-level skip. Only the distinct non-required `review-labels / Reconcile managed review labels (advisory)`
+check is published. Public repositories also authorize the new caller path in their Actions-policy allowlist;
+no policy change or apply is automatic. See `docs/delivery-labels.md` for exact caller files and named-repository
+consent requirements. xrbuild's existing CI label subscription needs a separate consumer fix for test isolation.
 
 Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
 assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository

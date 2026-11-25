@@ -2,7 +2,7 @@
   { "kind": "default-branch", "checks": ["Delivery tooling tests"] },
   {
     "kind": "workflow-events",
-    "workflows": [".github/workflows/self-delivery.yml"],
+    "workflows": [".github/workflows/self-delivery.yml", ".github/workflows/self-review-labels.yml"],
     "events": ["pull_request_target", "workflow_dispatch"]
   }
 ]

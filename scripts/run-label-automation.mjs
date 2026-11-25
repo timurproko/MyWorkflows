@@ -3,13 +3,17 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { labelApi, syncLabels, validateRepository } from "./repository-labels.mjs";
 import { cleanupReviewLabel } from "./review-label-cleanup.mjs";
+import { reconcileReviewLabels } from "./review-label-reconciliation.mjs";
 
 export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log, event, manifest } = {}) {
-  if (environment.GITHUB_ACTIONS !== "true" || !["pull_request_target", "workflow_dispatch", "workflow_run"].includes(environment.GITHUB_EVENT_NAME)) {
+  const operation = environment.LABELS_OPERATION ?? "sync";
+  const prEvent = ["pull_request", "pull_request_target"].includes(environment.GITHUB_EVENT_NAME);
+  if (environment.GITHUB_ACTIONS !== "true" || !["pull_request_target", "workflow_dispatch", "workflow_run"].includes(environment.GITHUB_EVENT_NAME)
+    && !(operation === "reconcile" && prEvent)) {
     throw new Error("label automation requires a trusted delivery event");
   }
-  const operation = environment.LABELS_OPERATION ?? "sync";
-  if (!["sync", "cleanup"].includes(operation) || (operation === "cleanup" && environment.GITHUB_EVENT_NAME !== "pull_request_target")) {
+  if (!["sync", "cleanup", "reconcile"].includes(operation) || (operation === "cleanup" && environment.GITHUB_EVENT_NAME !== "pull_request_target")
+    || (operation === "reconcile" && !prEvent)) {
     throw new Error("invalid internal label operation for this event");
   }
   const dryRun = operation === "sync" && environment.GITHUB_EVENT_NAME === "workflow_dispatch" && environment.LABELS_DRY_RUN === "true";
@@ -21,6 +25,12 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   const repository = validateRepository(environment.GITHUB_REPOSITORY);
   if (!dryRun && (!environment.LABELS_APP_TOKEN || environment.GH_TOKEN !== environment.LABELS_APP_TOKEN)) {
     throw new Error("label writes require the separate delivery App token with Pull requests write");
+  }
+  if (operation === "reconcile") {
+    event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));
+    const result = await reconcileReviewLabels({ repository, event, api, manifest, enabled: environment.DELIVERY_LABELS_ENABLED });
+    report(`Managed review-label open-PR reconciliation: ${result.disposition}.`);
+    return result;
   }
   if (operation === "cleanup") {
     event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));

@@ -31,7 +31,8 @@ edits after merge.
 ## Adopting it in a repository
 
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
-2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml`, unchanged.
+2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml`, unchanged. For advisory review-label
+   exclusivity, also copy `templates/review-labels-caller.yml` to `.github/workflows/review-labels.yml`; never add label events to delivery or test callers.
 3. Name your CI gate `CI required`, then run `delivery protect --repo <owner/name>` to inspect protection.
    Use `--apply` to install missing protection: the default branch requires `CI required` and
    `delivery / Delivery check`, squash merges only, and linear history. No repository registration or file is needed.
@@ -62,12 +63,13 @@ Created/unmanaged labels are not adopted and deleting a reference never deletes 
 may omit the robot prefix. `delivery labels-reference` reports missed-event reconciliation;
 `--apply` publishes a topic PR only, never writes labels or main.
 
-Sync and closed-PR cleanup are **enabled by default**. The consumer's `DELIVERY_LABELS_ENABLED=false` opts out
+Sync, open-PR exclusivity and closed-PR cleanup are **enabled by default**. The consumer's `DELIVERY_LABELS_ENABLED=false` opts out
 (case-insensitive, without whitespace trimming). Unset, empty, `true` and any other value remain enabled.
 After the reference PR merges, each consumer syncs on its next delivery event; idle repositories wait.
 Renames use `previousNames` and PATCH `new_name` to preserve existing assignments. When old and new both exist,
 keep the new one, preserve/report the old one and never delete automatically. Reference sync guards unmerged UI drift.
-Callers tracking `main` need no edit; pinned callers must align the workflow reference and matching `tools_ref`.
+Definition sync needs no caller edit for callers tracking `main`; pinned callers must align the workflow reference and matching `tools_ref`.
+Open-PR exclusivity requires its separate label-only caller as described below.
 Manual dry runs stay read-only even when opted out; optional default pruning needs separate explicit consent
 and excludes managed current/historical names.
 
@@ -87,9 +89,18 @@ The runner uses its signed-in credential; no heartbeat, lease or timed crash-exp
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
 Label jobs remain isolated from promotion/finalization and required checks, with visible warnings on failure.
 Definition sync uses a repository-wide multi-pending queue, not cancellation of waiting PR checks.
-PR label assignments do not restart shared delivery; callers should also omit `labeled`/`unlabeled` from test
-triggers. The exact crew/herdr-app CI follow-ups and queue limits are in
-[the scheduling guidance](docs/delivery-labels.md#scheduling-and-assignment-only-events).
+Open-PR additions run only `review-label-reconciliation` in the separate `.github/workflows/review-labels.yml`
+reusable workflow, publishing `review-labels / Reconcile managed review labels (advisory)`, never a required check.
+Delivery callers do not subscribe to label events: even a skipped required job can overwrite a failed gate.
+It ranks each currently assigned managed name by its latest exact-name `labeled` event's `created_at` timestamp,
+with event-id ordering for equal timestamps, regardless of bot or person; current/historical aliases participate equally.
+`unlabeled` events never rank survivors. One missing addition is oldest; two or more missing additions warn without writes.
+Closed/merged PRs are no-ops for this writer. Per-PR serialization uses a multi-pending queue, while fresh history
+prevents an older queued event winning. API failures, history delays, queue cancellation and the non-atomic
+read/DELETE race remain best-effort limits; no labels are added or restored.
+Add the separate tiny caller from `templates/review-labels-caller.yml`, triggered by only `labeled`; keep both label
+actions out of delivery and test triggers. The [exact seven-consumer caller files and policy/test audit](docs/delivery-labels.md#scheduling-and-assignment-only-events)
+include required Actions-policy allowlisting and xrbuild's existing label-triggered CI exception; other inspected consumer test workflows exclude labels.
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
@@ -166,8 +177,10 @@ delivery bot does both.
 `delivery protect --repo <owner/name>` works for any repository without an entry in this project. Its built-in
 policy requires `CI required` and `delivery / Delivery check` on the actual default branch, with strict/up-to-date
 checks, pull requests, resolved review threads, squash merges only, linear history, no deletion or force push,
-and repository-admin bypass for pull requests only. The `allow-delivery-events` Actions policy permits
-`.github/workflows/delivery.yml` on exactly `pull_request_target` and `workflow_dispatch`.
+and repository-admin bypass for pull requests only. The default `allow-delivery-events` Actions policy permits
+`.github/workflows/delivery.yml` on exactly `pull_request_target` and `workflow_dispatch`. Public consumers adopting
+optional label exclusivity must also declare/authorize the separate review-labels caller path, as documented in
+[the rollout notes](docs/delivery-labels.md#exact-caller-rollout-and-test-workflow-audit); no policy is applied automatically.
 
 ### Optional repository override
 

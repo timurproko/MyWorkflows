@@ -144,11 +144,11 @@ describe("repository protection configuration", () => {
     expect(() => validateDeclarations(items, "develop")).toThrow(`invalid ${PROTECTION_FILE}`);
   });
 
-  it("ships only this repository's exception, preserving its original declaration payload", async () => {
+  it("preserves this repository's required gates while declaring its separate advisory caller", async () => {
     const own = validateDeclarations(JSON.parse(await readFile(PROTECTION_FILE, "utf8")), "main");
     expect(own).toEqual([
       { kind: "default-branch", checks: ["Delivery tooling tests"] },
-      { kind: "workflow-events", workflows: [".github/workflows/self-delivery.yml"], events: ["pull_request_target", "workflow_dispatch"] },
+      { kind: "workflow-events", workflows: [".github/workflows/self-delivery.yml", ".github/workflows/self-review-labels.yml"], events: ["pull_request_target", "workflow_dispatch"] },
     ]);
     expect(buildRuleset(own[0], "main").rules.some(rule => rule.type === "required_linear_history")).toBe(false);
     await expect(readFile("protection/repositories.json", "utf8")).rejects.toMatchObject({ code: "ENOENT" });

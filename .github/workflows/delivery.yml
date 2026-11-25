@@ -189,7 +189,7 @@ jobs:
     name: Sync the base labels
     # Assignment-only events do not change definitions and must not restart delivery checks.
     if: >-
-      github.event_name != 'pull_request_target'
+      (github.event_name != 'pull_request_target' && github.event_name != 'pull_request')
       || (github.event.action != 'labeled' && github.event.action != 'unlabeled')
     # Read-only manual diffs use github.token, including for private repository labels.
     permissions:
