@@ -29,14 +29,28 @@ export function classifyRefreshCandidate(pull, repository) {
  * Decide whether an eligible head already contains the current target, using
  * a GitHub comparison of `target...head`.
  */
-export function decideRefresh(eligibility, comparison, targetSha) {
+export function decideRefresh(eligibility, comparison, targetSha, { strict = false, mergeable = null } = {}) {
   if (eligibility.disposition !== "eligible") return eligibility;
   const behindBy = comparison?.behind_by;
   if (!Number.isSafeInteger(behindBy) || behindBy < 0) {
     return { ...eligibility, disposition: "failed", targetSha, reason: "comparison response is malformed" };
   }
   if (behindBy === 0) return { ...eligibility, disposition: "current", targetSha };
+  if (!strict && mergeable !== false) {
+    return { ...eligibility, targetSha, behindBy, disposition: mergeable === true ? "skipped" : "deferred",
+      reason: mergeable === true ? "non-strict protection; conflict-free head is merely behind" : "mergeability is not yet known; no refresh attempted" };
+  }
   return { ...eligibility, disposition: "update", targetSha, behindBy };
+}
+
+/** Active rules are read from GitHub, not the desired defaults: existing strict consumers still need refresh. */
+export function strictRefreshRequired(rules) {
+  if (!Array.isArray(rules) || rules.some(rule => typeof rule?.type !== "string")) throw new Error("active branch rules are malformed");
+  const checks = rules.filter(rule => rule.type === "required_status_checks");
+  if (checks.some(rule => typeof rule.parameters?.strict_required_status_checks_policy !== "boolean")) {
+    throw new Error("active required-check strictness is malformed");
+  }
+  return checks.some(rule => rule.parameters.strict_required_status_checks_policy);
 }
 
 /**
@@ -84,6 +98,19 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
     if (listing.body.length < PAGE_SIZE) break;
   }
 
+  // One effective active-rules snapshot per pass, including inherited rulesets. Read errors never authorize a write.
+  let strictPolicy;
+  const strict = () => strictPolicy ??= (async () => {
+    const rules = [];
+    for (let page = 1; page <= maxPages; page += 1) {
+      const batch = (await request(`${prefix}/rules/branches/${encodeURIComponent(targetBranch())}?per_page=${PAGE_SIZE}&page=${page}`)).body;
+      strictRefreshRequired(batch); // Validate every page before any mutation, never infer non-strict from an invalid read.
+      if (batch.length > PAGE_SIZE) throw new Error("active branch rules page is oversized");
+      rules.push(...batch);
+      if (batch.length < PAGE_SIZE) return strictRefreshRequired(rules);
+    }
+    throw new Error(`active branch rules exceeded ${maxPages} pages`);
+  })();
   const results = [];
   for (const number of numbers) {
     try {
@@ -105,7 +132,9 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
     const targetSha = (await request(`${prefix}/git/ref/heads/${targetBranch()}`)).body?.object?.sha;
     if (typeof targetSha !== "string" || !FULL_SHA.test(targetSha)) return { ...eligibility, disposition: "failed", reason: "target ref is malformed" };
     const comparison = (await request(`${prefix}/compare/${targetSha}...${eligibility.headSha}?per_page=1`)).body;
-    const decision = decideRefresh(eligibility, comparison, targetSha);
+    const current = decideRefresh(eligibility, comparison, targetSha);
+    if (current.disposition === "current" || current.disposition === "failed") return current;
+    const decision = decideRefresh(eligibility, comparison, targetSha, { strict: await strict(), mergeable: pull.mergeable });
     if (decision.disposition !== "update") return decision;
 
     // Concurrency: the expected head binds this decision to the exact SHA just compared; GitHub rejects it if the branch moved.

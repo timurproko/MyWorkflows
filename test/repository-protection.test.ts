@@ -76,6 +76,7 @@ describe("repository protection configuration", () => {
     expect(branch.rules.map(rule => rule.type)).toEqual(["deletion", "non_fast_forward", "required_linear_history", "pull_request", "required_status_checks"]);
     expect(branch.rules.find(rule => rule.type === "pull_request")!.parameters.allowed_merge_methods).toEqual(["squash"]);
     expect(branch.rules.at(-1)!.parameters.required_status_checks).toEqual([{ context: "CI required" }, { context: DELIVERY_CHECK }]);
+    expect(branch.rules.at(-1)!.parameters.strict_required_status_checks_policy).toBe(false);
     expect(buildEventPolicy(DEFAULT_DECLARATIONS[1])).toEqual(buildEventPolicy(events));
     expect(formatProtection(report)).toContain("configuration: built-in defaults at default-sha");
   });
@@ -202,6 +203,40 @@ describe("existing repository migration", () => {
     expect(branch.rules.some(rule => rule.type === "required_linear_history")).toBe(false);
     expect(branch.rules.at(-1)!.parameters.required_status_checks).toEqual([{ context: "Development validation required" }, { context: DELIVERY_CHECK }]);
     expect(live.writes()).toEqual([]);
+  });
+});
+
+describe("non-strict required-check migration", () => {
+  it("reports strict-to-nonstrict drift without writes or loss of required checks", async () => {
+    const rulesets = standard(DEFAULT_DECLARATIONS);
+    const checks = rulesets[0]!.rules.find(rule => rule.type === "required_status_checks")!.parameters;
+    checks.strict_required_status_checks_policy = true;
+    checks.required_status_checks[0]!.integration_id = 15368;
+    const live = fake(rulesets);
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true });
+    expect(report.blocked).toBe(true);
+    expect(report.rulesets[1]!.changes).toEqual(["required_status_checks.strict_required_status_checks_policy: true -> false"]);
+    expect(live.writes()).toEqual([]);
+  });
+
+  it("changes only strictness with consent and keeps required-check App pins", async () => {
+    const rulesets = standard(DEFAULT_DECLARATIONS);
+    const checks = rulesets[0]!.rules.find(rule => rule.type === "required_status_checks")!.parameters;
+    checks.strict_required_status_checks_policy = true;
+    checks.required_status_checks[0]!.integration_id = 15368;
+    const before = structuredClone(rulesets[0]);
+    const live = fake(rulesets, { reflectWrites: true });
+    const report = await protectRepository({ repository: "o/r", api: live.api, apply: true, allowRuleChanges: true });
+    expect(report.applied).toBe(true);
+    before.rules.find(rule => rule.type === "required_status_checks")!.parameters.strict_required_status_checks_policy = false;
+    expect(rulesets[0]).toEqual(before);
+    expect(live.writes().map(([method, path]) => [method, path])).toEqual([["PUT", "repos/o/r/rulesets/1"]]);
+  });
+
+  it("uses non-strict checks for repository overrides too", () => {
+    const checks = buildRuleset(declarations[0], "develop").rules.find(rule => rule.type === "required_status_checks")!.parameters;
+    expect(checks.strict_required_status_checks_policy).toBe(false);
+    expect(checks.required_status_checks).toEqual([{ context: "Tests required" }, { context: DELIVERY_CHECK }]);
   });
 });
 
@@ -345,6 +380,7 @@ describe("repository protection", () => {
     expect(describeChanges(legacyDefault, desired, "develop")).toEqual([
       "rename from old-protect-develop",
       "bypass none -> RepositoryRole:5:pull_request",
+      "required_status_checks.strict_required_status_checks_policy: true -> false",
       `required_status_checks.required_status_checks: Tests required -> Tests required, ${DELIVERY_CHECK}`,
     ]);
   });
@@ -353,7 +389,7 @@ describe("repository protection", () => {
     const dry = fake([legacyDefault, legacyTags, stray], { classic: true });
     const report = await protectRepository({ repository: "o/r", api: dry.api, declarations });
     expect(dry.writes()).toEqual([]);
-    expect(report.rulesets.map(ruleset => [ruleset.name, ruleset.changes.length])).toEqual([["Actions policy allow-delivery-events", 0], ["protect-develop", 3], ["protect-master", 1], ["protect-release-tags", 1]]);
+    expect(report.rulesets.map(ruleset => [ruleset.name, ruleset.changes.length])).toEqual([["Actions policy allow-delivery-events", 0], ["protect-develop", 4], ["protect-master", 1], ["protect-release-tags", 1]]);
     expect(report.notes).toContain("ruleset experiment is not declared and was left alone");
     expect(formatProtection(report)).toContain("Nothing was changed.");
   });

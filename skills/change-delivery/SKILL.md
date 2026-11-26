@@ -53,7 +53,8 @@ branch. Implementation approval is not merge permission.
   Commits and PR titles are `type(scope): subject`; the PR title becomes the squash commit.
 - Scratch files (PR bodies, logs, patches) go in the worktree's ignored `.artifacts/`, never the system temp
   folder, the home folder or another checkout.
-- Continue an existing task in its existing worktree, branch and PR. One task, one PR.
+- Continue an existing task in its existing worktree, branch and PR. One concern per pull request; unrelated
+  changes and non-blocking follow-ups belong in separate work.
 
 ## 2. Plan as a draft PR
 
@@ -112,8 +113,8 @@ then tick that outcome in the PR body (`[ ]` to `[x]`, nothing else) before star
 - A tick means the code and tests are written. CI, broad test runs and manual validation never delay it; a later
   defect is fixed in a new commit. Never save ticks for handoff, and never tick unfinished work.
 - Adding, removing, reordering or rewording an outcome is a scope change: get approval and update the plan first.
-- Before pushing, run only quick targeted checks of what changed. Do not loop broad local suites; CI on the
-  final head is the integration gate.
+- Build: make the change, run only the tests for what you touched, and push. No full local test suite;
+  CI runs the integration suite. List the targeted commands and results in the report.
 
 ## 4. Finish
 
@@ -122,24 +123,39 @@ Before ticking the **last** outcome:
 1. Finish all tasks; state each known gap and what happens to it.
 2. Add `## Acceptance` before `## Automation`: one to ten plain bullets (not checkboxes) saying what now holds,
    specific to this change, each one line of 20 to 300 bytes with the same content rules as Implementation.
-3. Bring the branch up to date with the default branch and push.
+3. Push the final implementation head; do not merge the base merely to satisfy an up-to-date requirement.
 4. Check the final body: `delivery check-body --body-file .artifacts/pr-body.md --final`.
 
-Then tick the last outcome. That ends the agent's part. The bot verifies the exact snapshot and marks the PR
-ready, then commits `docs(openspec): finalize <change-id>` to the branch and records the archive in the
-Automation block. Always `git pull` before pushing again; never revert a finalization commit, push fixes on top.
-A fully ticked draft that stays draft means the bot refused it: read the `Delivery` workflow run for the reason.
+Then tick the last outcome and report as soon as the work is pushed. CI and the review start together; do not
+wait for green CI before reporting or starting review. The bot keeps its existing behavior: it verifies the
+completed draft snapshot and marks ready, then commits `docs(openspec): finalize <change-id>` and records the
+archive and finalized head in Automation. Agents never mark a pull request ready. Always `git pull` before
+pushing again; never revert a finalization commit, push fixes on top. A fully ticked draft that stays draft
+means the bot refused it: read the Delivery workflow result for the reason.
 
-A PR that links no change follows the same steps with the Automation section left out: the bot marks it ready
-when every outcome is ticked and the body is valid, and there is nothing to finalize.
+A PR that links no change follows the same flow with the Automation section left out: the bot marks it ready
+when every outcome is ticked and the body is valid, and there is nothing to finalize. No review-approval dispatch
+or caller migration is needed.
 
 ## 5. CI and handoff
 
-- Drafts run no test suites. The ready, finalized head gets the repository's tests plus the `Delivery check`.
-- Do not watch CI in the foreground. Read its current result, report it, and repair failures in the same PR
-  without weakening a test or a check.
-- Hand off after pushing a plan, after CI is green, and after any repair push: worktree path, branch, commit,
-  change, PR, behaviour, known gaps, and one command the maintainer can run. Say when nothing is runnable.
+1. **Build:** make the change, run only the tests for what you touched, and push. No full local test suite.
+2. **Report immediately after pushing:** CI and the review start together. Do not wait for CI or bot completion
+   to hand off. Include worktree path, branch, exact commit, change, PR, behavior, known gaps, targeted commands
+   and results, and one command the maintainer can run. Plan handoff still stops for approval.
+3. **One combined fix round:** collect CI failures and review findings together, fix the blocking items in the
+   same PR, run only the relevant tests and push once. Do not weaken tests or checks. Keep one concern per PR.
+4. **Approval:** approved means the review approved that commit and CI is green on that same commit. Pending
+   CI or approval of an earlier commit is not Approved. Required checks independently block merge.
+
+Reviewers inspect the exact pushed commit, run only relevant tests and state what was checked. Mark every
+finding **BLOCKING** or **FOLLOW-UP**. Only blocking findings cause another round; follow-ups are recorded for
+separate work, not bundled into this PR. The second review covers only the fix (delta review), not the entire
+change again. After two rounds the person decides; do not start a third automated review/fix round.
+
+Do not watch CI in the foreground or delay a pushed report for it. Report current CI state honestly (including
+pending or failed) so CI and review can run together. Agents never mark ready, arm auto-merge or merge without
+the explicit permission described below.
 
 ### Final agent review labels
 
@@ -152,7 +168,7 @@ trimming). Unset, empty, `true` and any other value remain enabled. Do not creat
 | --- | --- | --- | --- |
 | `under-review` | 🤖 Review | `840479` | 🤖 Under review |
 | `review-approved` | 🤖 Approved | `1a7f37` | none |
-| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
+| `review-changes-needed` | 🤖 Build | `9a6700` | 🤖 Rework, 🤖 Changes needed |
 
 Initially each has an empty description, U+1F916 and one ordinary space, with no variation selector.
 Future valid names can omit the robot prefix. Never identify a role from a display name. MyWorkflows' GitHub
@@ -174,8 +190,12 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Use the runner's signed-in credential, not the delivery App private key, and ordinary PR label operations.
   At review start, add current `under-review` and clear both verdict keys' current/historical assignments
   before launching the reviewer, even on a draft or pending-CI PR. Resolve the implementation PR, not a Plan report.
-- On `APPROVE`, clear current/historical review-in-progress and opposite-verdict assignments and add current
-  `review-approved`; on `CHANGES NEEDED`, do the same and add current `review-changes-needed`.
+- Build means building or fixing, including the combined CI/review fix round. Review is the review stage,
+  including waiting for same-commit CI after a review approves. On `APPROVE`, add current `review-approved`
+  only when the review approved that commit and CI is green on that same commit; until then keep Review.
+  When both hold, clear current/historical review-in-progress and opposite-verdict assignments. On
+  `CHANGES NEEDED` for blocking findings, clear competing roles and add current `review-changes-needed` (Build).
+  FOLLOW-UP findings alone do not trigger another round.
   Verdicts are mutually exclusive; preserve unrelated labels.
 - On failed launch/report, stop, finish, observed death or abandonment, clear current/historical in-progress
   assignments without inventing a verdict. Make retries idempotent and report permission/API failures.
@@ -183,9 +203,10 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Complete old cleanup before replacement. Use one owner per PR or retain the label until that owner's last
   local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
 - All three labels are advisory, never required checks or merge gates; absence is not approval. A retained
-  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes all three managed roles'
-  current/historical assignments, including both verdicts. No verdict is added; unrelated labels remain untouched.
-  A reopened PR has no robot review label until the next review sets one; removed assignments are not restored.
+  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes Build and Review
+  current/historical assignments; Approved stays as the record, including its aliases. No verdict is added;
+  unrelated labels remain untouched. A reopened PR keeps that record until the next review sets one;
+  removed assignments are not restored.
   Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or automatic historical sweep. A lost runner
   may leave an open PR labeled until recovery or a person clears it. Crew integration is separate work in crew.
 - Consumer sync renames an existing previous-name definition with PATCH `new_name`, preserving assignments.
@@ -213,7 +234,7 @@ satisfy GitHub protection and overwrite a failed gate: label runs must never cal
 behind a job-level skip. Only the distinct non-required `review-labels / Reconcile managed review labels (advisory)`
 check is published. Public repositories also authorize the new caller path in their Actions-policy allowlist;
 no policy change or apply is automatic. See `docs/delivery-labels.md` for exact caller files and named-repository
-consent requirements. xrbuild's existing CI label subscription needs a separate consumer fix for test isolation.
+consent requirements. The earlier xrbuild CI label subscription was repaired separately; never reintroduce it.
 
 Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
 assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository

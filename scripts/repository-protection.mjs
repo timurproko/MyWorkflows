@@ -92,7 +92,8 @@ export function buildRuleset(declaration, defaultBranch) {
           allowed_merge_methods: declaration.mergeMethods ?? ["squash"],
         } },
         { type: "required_status_checks", parameters: {
-          strict_required_status_checks_policy: true, do_not_enforce_on_create: false,
+          // Parallel agents must not rerun every PR's full CI whenever another PR merges.
+          strict_required_status_checks_policy: false, do_not_enforce_on_create: false,
           required_status_checks: checks.map(context => ({ context })),
         } },
       ] };

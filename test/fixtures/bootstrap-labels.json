@@ -17,8 +17,8 @@
       }
     },
     "review-changes-needed": {
-      "name": "🤖 Rework", "color": "9a6700", "description": "",
-      "previousNames": ["🤖 Changes needed"],
+      "name": "🤖 Build", "color": "9a6700", "description": "",
+      "previousNames": ["🤖 Rework", "🤖 Changes needed"],
       "reference": {
         "id": 13192323855, "nodeId": "LA_kwDOVy9vAc8AAAADElLjDw",
         "name": "🤖 Changes needed", "color": "9a6700", "description": ""

@@ -22,7 +22,7 @@ describe("reference UI drift guard", () => {
     const original = f.labels.map(label => label.id);
     expect((await syncLabels({ repository: REFERENCE_REPOSITORY, api: f.api, apply: true })).labels.map(item => item.action)).toEqual(["rename", "unchanged", "rename"]);
     expect(f.labels.map(label => label.id)).toEqual(original);
-    expect(f.labels.map(label => label.name)).toEqual(["🤖 Review", "🤖 Approved", "🤖 Rework"]);
+    expect(f.labels.map(label => label.name)).toEqual(["🤖 Review", "🤖 Approved", "🤖 Build"]);
     expect((await syncLabels({ repository: REFERENCE_REPOSITORY, api: f.api, apply: true })).labels.every(item => item.action === "unchanged")).toBe(true);
     expect(f.api.mock.calls.filter(([method]) => method === "PATCH")).toHaveLength(2);
   });

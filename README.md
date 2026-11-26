@@ -10,16 +10,27 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 2. The agent ticks each Implementation checkbox as that outcome is written and pushed.
 3. When every checkbox is ticked and the body is valid, the delivery bot marks the PR ready for review.
 4. The bot finalizes the linked OpenSpec change in the PR branch (sync specs, archive, record the finalized head).
-5. The repository's own CI runs its tests. The maintainer merges, or arms auto-merge.
-6. After a merge, the bot deletes the merged branch and brings other ready PRs up to date.
+5. The agent reports as soon as the work is pushed; CI and the review start together. Approved means the review
+   approved that commit and CI is green on that same commit. The maintainer merges, or arms auto-merge.
+6. After a merge, the bot deletes the merged branch and refreshes ready PRs only for strict protection or conflicts.
 
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
-for that PR, and only with green CI on its current head.
+for that PR, and only with green CI on its current head. Promotion remains automatic on completed outcomes;
+no approval dispatch or caller migration is needed.
+
+Keep one concern per pull request. Run only tests for what changed, not the full local suite, then push and report.
+One fix round combines CI failures and blocking review findings. Reviewers mark every finding BLOCKING or FOLLOW-UP;
+only blocking findings cause another round, the second review covers only the fix, and after two rounds the person decides.
+The shared skill contains the complete loop.
 
 ## Ready pull-request refresh
 
-After a merge, the shared job refreshes stale, ready PRs with same-repository heads against the delivery target,
-using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+After a merge, the shared job reads active default-branch rulesets and checks ready same-repository PRs against
+the delivery target. A conflict-free PR that is merely behind is left untouched under non-strict protection,
+preserving its reviewed head and avoiding another full CI run. Refresh is attempted only when an active required-check
+rule is strict or GitHub reports a merge conflict. Unknown mergeability is deferred; unavailable/malformed rules
+never authorize a write. Conflicts that GitHub cannot merge require manual resolution. Updates still use the
+observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
 Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
 not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
 Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
@@ -54,7 +65,7 @@ optional override described below.
 | --- | --- | --- | --- |
 | `under-review` | 🤖 Review | `840479` | 🤖 Under review |
 | `review-approved` | 🤖 Approved | `1a7f37` | none |
-| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
+| `review-changes-needed` | 🤖 Build | `9a6700` | 🤖 Rework, 🤖 Changes needed |
 
 Initially each has an empty description; names start with U+1F916 and one ordinary space, without a variation selector.
 The reference is these managed labels on **MyWorkflows' GitHub Labels page**, bound by GitHub id/node id.
@@ -79,11 +90,16 @@ Omitting `ref` resolves the default branch; explicit discovery is equivalent. A 
 Warned fallback to the initial names and legacy aliases is allowed on read/validation failure, never silently;
 crew uses one request with a two-second timeout. Crew implementation remains a separate task, retaining crew PR #7's limits.
 At review start, add current `under-review` and clear both verdict keys' current/historical assignments before launching the reviewer.
-On `APPROVE` use current `review-approved`; on `CHANGES NEEDED` use current `review-changes-needed`, clearing review/other-verdict aliases.
+On `APPROVE` use current `review-approved` only when the review approved that commit and CI is green on that same commit;
+keep Review while CI is pending. On `CHANGES NEEDED` for blocking findings use current `review-changes-needed` (Build),
+clearing review/other-verdict aliases. FOLLOW-UP findings alone do not cause another round.
 Verdicts are mutually exclusive. Failed launch/report, stop, finish, observed death or abandonment clears only
-in-progress names without inventing a verdict. Closed/merged cleanup removes all three managed roles'
-current/historical assignments, including both verdicts. Unrelated labels are preserved. A reopened PR has no
-robot review label until the next review sets one; cleanup never restores removed assignments.
+in-progress names without inventing a verdict. Closed/merged cleanup removes Build and Review
+current/historical assignments; Approved stays as the record, including its aliases. Unrelated labels are preserved.
+A reopened PR keeps that record until the next review sets one; cleanup never restores removed assignments.
+Build means building/fixing, including the combined CI/review fix round; Review is the review stage, including
+waiting for same-commit CI after review approval. Approved requires both review approval and green CI on that commit.
+There are exactly three managed labels; GitHub checks also show CI separately.
 All three labels are advisory; absence is not approval, and a retained verdict does not guarantee later commits were reviewed.
 The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.
@@ -100,7 +116,8 @@ prevents an older queued event winning. API failures, history delays, queue canc
 read/DELETE race remain best-effort limits; no labels are added or restored.
 Add the separate tiny caller from `templates/review-labels-caller.yml`, triggered by only `labeled`; keep both label
 actions out of delivery and test triggers. The [exact seven-consumer caller files and policy/test audit](docs/delivery-labels.md#scheduling-and-assignment-only-events)
-include required Actions-policy allowlisting and xrbuild's existing label-triggered CI exception; other inspected consumer test workflows exclude labels.
+include required Actions-policy allowlisting and the historical xrbuild label-triggered CI issue, repaired separately.
+Keep label additions/removals and body-only edits out of test triggers.
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
@@ -175,12 +192,21 @@ delivery bot does both.
 ## Branch and tag protection
 
 `delivery protect --repo <owner/name>` works for any repository without an entry in this project. Its built-in
-policy requires `CI required` and `delivery / Delivery check` on the actual default branch, with strict/up-to-date
-checks, pull requests, resolved review threads, squash merges only, linear history, no deletion or force push,
+policy requires `CI required` and `delivery / Delivery check` on the actual default branch, with non-strict
+checks (no requirement to be up to date with the base), pull requests, resolved review threads, squash merges only,
+linear history, no deletion or force push,
 and repository-admin bypass for pull requests only. The default `allow-delivery-events` Actions policy permits
 `.github/workflows/delivery.yml` on exactly `pull_request_target` and `workflow_dispatch`. Public consumers adopting
 optional label exclusivity must also declare/authorize the separate review-labels caller path, as documented in
 [the rollout notes](docs/delivery-labels.md#exact-caller-rollout-and-test-workflow-audit); no policy is applied automatically.
+
+With several agents working in one repository, strict checks sent every open PR back through a base merge and
+full CI run after each merge. The shared builder now sets `strict_required_status_checks_policy: false`, including
+for repository overrides. Required checks still gate every merge; CI on the default branch catches the rare case
+of two changes that pass separately and break together. Ready-PR refresh consults live active rulesets, not merely
+the new desired default, so still-strict repositories retain automatic base refresh while non-strict clean heads stay untouched.
+This changes the tool's desired policy, not live rulesets: it takes effect in each repository when protection is
+next explicitly applied with consent. See [application and migration](docs/protection-migration.md).
 
 ### Optional repository override
 
@@ -199,7 +225,7 @@ API errors fail closed. Supported fields are:
 
 | Kind | Ruleset name | What it enforces |
 | --- | --- | --- |
-| `default-branch` | `protect-<default branch>` | No deletion or force push, pull request required, the repository's test checks plus `delivery / Delivery check`, branch up to date, and the repository admin may bypass for pull requests only. Options: `checks`, `mergeMethods`, `linearHistory`, `delivery: false` until the repository calls the shared workflow. |
+| `default-branch` | `protect-<default branch>` | No deletion or force push, pull request required, the repository's test checks plus `delivery / Delivery check`, no base-up-to-date requirement, and the repository admin may bypass for pull requests only. Options: `checks`, `mergeMethods`, `linearHistory`, `delivery: false` until the repository calls the shared workflow. |
 | `branch` | `protect-<branch>` | No deletion or force push, for a branch only automation advances. Required field: `branch`. |
 | `release-tags` | `protect-release-tags` | No deletion or movement of tags except by the release Apps. Options: `pattern` (default `v*`), `bypassApps` (numeric App IDs). |
 | `workflow-events` | Actions policy `allow-delivery-events` | A public repository runs `pull_request_target` only where a policy allows it. Required arrays: `workflows` (paths in `.github/workflows/`) and `events`. |
@@ -239,7 +265,7 @@ does not bypass GitHub's plan or permission restrictions.
 
 In use by `timurproko/a1`, `timurproko/crew`, `timurproko/herdr-app` (scaffold only; source import pending),
 `timurproko/xrbuild`, its private workspace repository, and this repository itself
-(`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line), so a change to the shared
+(`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line and dispatch filename), so a change to the shared
 automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
 shared skill, local worktree cleanup and the machine bootstrap.

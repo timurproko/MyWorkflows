@@ -1,8 +1,30 @@
 # Protection override migration
 
-There is no central repository inventory. Built-in defaults exactly preserve crew, xrbuild and herdr-app's
-existing rulesets and Actions policy. MyWorkflows carries its own `.github/protection.json`, retaining its
-`Delivery tooling tests` gate, self-delivery workflow and existing lack of a linear-history requirement.
+There is no central repository inventory. The shared default-branch ruleset builder now uses
+`strict_required_status_checks_policy: false`, for built-in defaults and repository overrides alike. Required
+checks (`CI required` and `delivery / Delivery check`, or a repository's declared equivalent) still gate every
+merge. With several agents working in one repository, the strict rule sent every open pull request back through
+a base merge and a full CI run after each merge. Non-strict checks avoid that requirement; CI on the default
+branch catches the rare case of two changes that pass separately and break together.
+
+The coordinator already changed crew, xrbuild and herdr-app's live strict flags to false and kept backups. This
+change does not apply anything live; the tool will no longer try to restore strict mode there. Other repositories
+with strict managed default-branch checks change on their next explicit protection apply. Read a fresh report
+first with `delivery protect --repo owner/name`; a nonzero drift report is not an instruction to bypass it blindly.
+After merging/updating the tooling and inspecting all reported differences, a person may apply the intended
+change with `delivery protect --repo owner/name --apply --allow-rule-changes`. This command may apply every
+reported managed-policy difference, not only strictness; unrelated drift needs its own decision. No protection
+apply is part of this PR. The task report records the read-only affected-repository audit.
+
+MyWorkflows retains its `Delivery tooling tests` gate, self-delivery workflow and existing lack of a linear-history
+requirement. Required-check names and App pins, review-thread resolution, merge methods, deletion/force-push
+protection and bypass permissions remain unchanged. The exact a1 override below still applies; strictness is a
+shared builder policy, not a new per-repository field.
+
+## Historical defaults/override adoption order
+
+The original adoption steps below predate the non-strict policy above; their no-policy-change statements describe
+that earlier migration, not this deliberate strict-to-nonstrict update.
 
 ## Order
 

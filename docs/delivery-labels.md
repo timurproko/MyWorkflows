@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | `under-review` | 🤖 Review | `840479` | 🤖 Under review |
 | `review-approved` | 🤖 Approved | `1a7f37` | none |
-| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
+| `review-changes-needed` | 🤖 Build | `9a6700` | 🤖 Rework, 🤖 Changes needed |
 
 The table and JSON example are fixed bootstrap examples, not a second current palette: routine UI edits update only the published manifest and do not require guidance edits. Initially each has an empty description. Initial names start with U+1F916 and one ordinary space, without a variation selector. Future valid UI edits **may remove the robot prefix**: never infer a role from spelling, colour or emoji. The reference is the managed labels on the **timurproko/MyWorkflows GitHub Labels page**, not labels with coincidentally matching names elsewhere.
 
@@ -47,7 +47,7 @@ The MyWorkflows-only `Reference labels` workflow uses trusted default-branch too
 
 Names must be nonempty, trimmed, control-character-free and at most 50 Unicode code points; colour must be six hexadecimal digits, description at most 100 code points. Duplicate source identities and case/Unicode-normalization collisions across different roles' current names/alias histories are rejected. Explicit same-role aliases support deliberate case/Unicode-only renames; an unlisted case/normalization collision is never silently adopted. Removing the robot prefix is allowed. Invalid UI edits are reported, not propagated blindly; the UI itself is not rolled back.
 
-Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. The existing delivery bot can promote it and run required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
+Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. The existing delivery bot promotes its completed draft and runs required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
 
 A metadata edit reverted to the accepted manifest before merge retires its generated PR: after the usual source/head preflight, the publisher comments that the reference now matches main and closes the PR instead of writing a pointless revert commit. Read-only mode reports `would-retire` without commenting/closing. Alias-history changes remain meaningful and are not discarded just because the display name reverted.
 
@@ -147,7 +147,7 @@ jobs:
 | `timurproko/herdr-app` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
 | `timurproko/crew` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
 | `timurproko/a1` | `.github/workflows/review-labels.yml` | `ci.yml`: explicit PR types exclude both; other inspected test entry points do not subscribe to label events or Delivery completion |
-| `timurproko/xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: **already includes both `labeled` and `unlabeled`**; exception below |
+| `timurproko/xrbuild` | `.github/workflows/review-labels.yml` | Historical audit found label triggers; the separate CI-trigger repair is now merged |
 | `timurproko/.xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
 | `timurproko/MyConfigs` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
 | `timurproko/MyWorkflows` | `.github/workflows/self-review-labels.yml` | `test.yml`: default PR actions exclude both |
@@ -171,20 +171,13 @@ inspect a fresh protection report and obtain separate named-repository authoriza
 `delivery protect --repo owner/name --apply --allow-rule-changes`. This task does not apply policies, change live
 permissions, or claim the new self-caller is live before its path is authorized.
 
-Adding this separate workflow cannot subscribe tests or emit skipped delivery/test checks, and no inspected test
-workflow consumes Review labels or Delivery completion. Thus it does not start tests in the six label-isolated consumers. However,
-xrbuild's existing `.github/workflows/ci.yml` line 10 is:
-
-```yaml
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited, labeled, unlabeled]
-```
-
-Its CI already runs on label additions/removals independently of delivery, including App-produced removals. Test
-isolation there cannot honestly be confirmed until a separately authorized consumer change removes only the last
-two entries, yielding `types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]`.
-No such consumer change is made here. herdr-app and crew have already applied that test-trigger exclusion;
-do not undo it. A job-level skip is too late because workflow-level concurrency may already cancel tests.
-Historical cancelled checks are not rewritten or rerun by this change.
+Tests run independently of delivery. Adding this separate workflow cannot subscribe tests or emit skipped
+delivery/test checks, and no inspected test workflow consumes Review labels or Delivery completion. The historical xrbuild audit found both label actions in
+`ci.yml`; the separate first-stage repair has now merged in crew, xrbuild, herdr-app and the private workspace.
+Those test triggers exclude `labeled`, `unlabeled` and body-only `edited`, and their required-check aggregators
+skip cancelled runs. Do not reintroduce those subscriptions. The Delivery caller keeps `edited` for body validation.
+No other repository is edited here. A job-level skip is too late because workflow-level concurrency may already
+cancel tests. Historical cancelled checks are not rewritten or rerun by this change.
 
 ### Open-PR exclusivity and deterministic ordering
 
@@ -222,41 +215,60 @@ lease, timer, crash-expiry guarantee or cross-controller lock. GitHub offers no 
 endpoint; the read/DELETE race remains: independent writers or closure/reopen between the last read and DELETE remain a non-atomic race. The
 closed-event job still owns closures; no stale verdict or review label is automatically restored after reopening.
 
+## Review loop and stage meanings
+
+There are exactly three managed labels: Build, Review and Approved. Build means building/fixing, including one
+combined fix round for CI failures and blocking review findings. Review is the review stage, including waiting
+for CI after review approval. Approved means the review approved that commit and CI is green on that same commit;
+review approval alone or green checks on an earlier head are not enough. Closed Approved remains a historical
+record, not approval of new commits.
+
+Keep one concern per pull request. Make the change, run only the tests for what you touched, push and report
+immediately: CI and the review start together. No full local test suite is required of workers or reviewers.
+Reviewers identify the exact commit, state what they checked, and mark every finding BLOCKING or FOLLOW-UP.
+Only blocking findings cause another round; follow-ups are recorded as separate work. Combine CI failures and
+blocking findings into one fix round. The second review covers only the fix (delta review); after two rounds
+the person decides, rather than launching a third automated round.
+
+The bot retains its existing promotion on completed draft outcomes, followed by linked-change finalization.
+Labels do not authorize promotion. No approval dispatch or caller migration is needed. Agents never mark ready.
+The shared change-delivery skill is the source of these delivery rules; crew's orchestration is separate work.
+
 ## Runner manifest API and crew contract
 
 At each review operation, read and validate one manifest snapshot from the configured source repository (default `timurproko/MyWorkflows`). Discover `default_branch` with `GET /repos/{source}`, then fetch `GET /repos/{source}/contents/labels/base.json?ref=<URL-encoded-default-branch>` with `Accept: application/vnd.github.raw+json`. **Equivalent one-read form:** `GET /repos/{source}/contents/labels/base.json` without `ref`. Omitting `ref` resolves the default branch on GitHub. Do not assume `main` or use a stale pinned copy.
 
 Default one-read URL: `https://api.github.com/repos/timurproko/MyWorkflows/contents/labels/base.json`. The current explicit-ref URL is `https://api.github.com/repos/timurproko/MyWorkflows/contents/labels/base.json?ref=main`. Require `version: 1`, all three stable keys, valid current names and `previousNames` arrays; tolerate additional reference metadata. Use one consistent snapshot within the operation, resolve by key and preserve unrelated labels.
 
-A runner **MAY use built-in defaults on read/validation failure if it explicitly warns**. The warned fallback is Review/Approved/Rework with the exact initial emoji/space names and alias lists in the table above, not the pre-migration names as current names. Silent fallback is forbidden. It cannot discover arbitrary future UI names and may leave those assignments untouched until manifest access recovers; it is not successful synchronization. This runner availability policy never authorizes reference reconciliation or MyWorkflows sync/cleanup to substitute hard-coded display names.
+A runner **MAY use built-in defaults on read/validation failure if it explicitly warns**. The warned fallback is Build/Review/Approved with the exact initial emoji/space names and alias lists in the table above, not the pre-migration names as current names. Silent fallback is forbidden. It cannot discover arbitrary future UI names and may leave those assignments untouched until manifest access recovers; it is not successful synchronization. This runner availability policy never authorizes reference reconciliation or MyWorkflows sync/cleanup to substitute hard-coded display names.
 
 Crew's separately implemented transport makes exactly one contents API read without `ref`, with a **two-second timeout**, and uses that warned fallback on failure. No separate repository-discovery read is required. No crew source is modified here; retain the lifecycle boundaries from **crew PR #7**:
 
 - Resolve the implementation PR from the implementation report/current branch, not a `Plan:` report. Respect repository opt-out; use the runner's signed-in credential, not the delivery App key.
 - At review start, add current `under-review` and remove both verdict keys' current/historical assignments **before launching the reviewer**, even for drafts or pending CI.
-- On `APPROVE`, clear current/historical review-in-progress and opposite-verdict names, then add current `review-approved`; on `CHANGES NEEDED`, do the same and add current `review-changes-needed`. Verdicts are mutually exclusive.
+- On `APPROVE`, add current `review-approved` only when the review approved that commit and CI is green on that same commit; keep Review while CI is pending. When both hold, clear current/historical review-in-progress and opposite-verdict names. On `CHANGES NEEDED` for blocking findings, clear competing roles and add current `review-changes-needed` (Build). FOLLOW-UP findings alone do not trigger another round. Verdicts are mutually exclusive.
 - Failed launch/report, stop, finish, observed death or abandonment clears current/historical in-progress names without inventing a verdict. Complete old cleanup before replacement; retain one owner per PR or wait for that owner's last local reviewer to finish. Plain labels cannot coordinate overlapping independent controllers.
 - Use ordinary `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["<resolved current name>"]}` and `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/{URL-encoded-resolved-name}`. Do not replace the whole label set or delete repository definitions. Repeated add is harmless; confirm access and absence before treating a remove-label 404 as success. Warn on permissions/API failures and use existing recovery.
 
-Closed/merged cleanup removes all three managed roles' current/historical assignments, including both verdicts; it never preserves a verdict as a closed-PR record. A reopened PR has no robot review label until the next review sets one; removed assignments are not restored. Unrelated labels remain untouched. This closure policy supersedes older published runner text promising verdict persistence; open-PR review/verdict transitions above are unchanged.
+Closed/merged cleanup removes Build and Review current/historical assignments; Approved stays as the record, including its aliases. A reopened PR keeps that record until the next review sets one; removed assignments are not restored. Unrelated labels remain untouched. This policy supersedes the earlier all-verdicts clear-on-close contract; retained Approved is historical evidence, not approval of later commits.
 
-All three labels are **advisory**, never required checks, readiness conditions or merge gates; absence is not approval. A retained verdict is not a promise that later commits were reviewed. No lease, heartbeat, dispatch protocol, state comment, timer, supervisor or cross-controller lock is added. There is **no time-based crash-expiry guarantee**: a lost machine can leave an open PR labeled until recovery or a person clears it.
+All three labels are **advisory**, never required checks, readiness conditions or merge gates; absence is not approval. A retained verdict is not a promise that later commits were reviewed. No lease, heartbeat, state comment, timer, supervisor or cross-controller lock is added. There is **no time-based crash-expiry guarantee**: a lost machine can leave an open PR labeled until recovery or a person clears it.
 
 ## Closed-event fallback
 
-The already forwarded `pull_request_target: closed` event resolves `under-review`, `review-approved` and `review-changes-needed` by stable key from one validated manifest snapshot and removes every current name and `previousNames` assignment on merged **and** unmerged closures. Both verdicts are removed even if unexpectedly present together. Unrelated labels survive. No verdict is added and no definition is deleted.
+The already forwarded `pull_request_target: closed` event validates all three stable roles from one manifest snapshot, then clears the two transient roles `under-review` (Review) and `review-changes-needed` (Build) current names and `previousNames` assignments on merged **and** unmerged closures. `review-approved` (Approved), including its historical aliases, remains as the record even if unexpectedly present alongside another stage. Unrelated labels survive. No verdict is added and no definition is deleted.
 
-Cleanup validates repository/event/PR identity and current closure state, paginates assignments, and checks for reopen before **each** removal. After removals or a DELETE 404, cleanup rescans all three roles' current/historical names so a concurrent definition rename cannot masquerade as assignment absence. A DELETE 404 succeeds only after confirming access and that exact assignment's absence; continued assignment churn fails visibly rather than reporting success. A final-read/reopen race cannot be made atomic. Opt-out, missed events and failed APIs can prevent cleanup; warnings do not hide these limits. The event handler does not sweep historical PRs or replay herdr-app #14's old closure. Use the explicit manual recovery below for older closed PRs.
+Cleanup validates repository/event/PR identity and current closure state, paginates assignments, and checks for reopen before **each** removal. After removals or a DELETE 404, cleanup rescans both transient roles' current/historical names so a concurrent definition rename cannot masquerade as assignment absence. A DELETE 404 succeeds only after confirming access and that exact assignment's absence; continued assignment churn fails visibly rather than reporting success. A final-read/reopen race cannot be made atomic. Opt-out, missed events and failed APIs can prevent cleanup; warnings do not hide these limits. The event handler does not sweep historical PRs or replay herdr-app #14's old closure. Use the explicit manual recovery below for older closed PRs.
 
 ## Explicit manual closed-PR sweep
 
-`delivery labels-sweep --repo owner/name` reports managed assignments on already-closed/merged pull requests in exactly one repository, **read-only by default**. Inspect the PR numbers and exact names in a fresh report, then obtain separate named-repository authorization before running `delivery labels-sweep --repo owner/name --apply`. Both `--repo owner/name` and `--repo=owner/name` work. There is no automatic invocation, schedule, dispatch or post-merge backfill, and implementation approval is not authorization to apply it. Do not run either mode as part of implementing this change.
+`delivery labels-sweep --repo owner/name` reports only Build/Review managed assignments on already-closed/merged pull requests in exactly one repository, **read-only by default**. Inspect the PR numbers and exact names in a fresh report, then obtain separate named-repository authorization before running `delivery labels-sweep --repo owner/name --apply`. Both `--repo owner/name` and `--repo=owner/name` work. There is no automatic invocation, schedule, dispatch or post-merge backfill, and implementation approval is not authorization to apply it. Do not run either mode as part of implementing this change.
 
-The command uses the normal signed-in `gh` credential or `GH_TOKEN`, never the delivery App private key or a newly minted App token. It reads one local published manifest snapshot from the installed tooling, validates all three stable keys, and resolves only their current names and `previousNames`; update the tooling first if its palette is stale. Report mode remains read-only even when opted out. For local apply, an environment value `DELIVERY_LABELS_ENABLED=false` disables writes (case-insensitive, no trimming); the calling repository's variable continues to gate the automatic jobs and is not fetched by this local command. Separate authorization is required regardless of opt-out settings.
+The command uses the normal signed-in `gh` credential or `GH_TOKEN`, never the delivery App private key or a newly minted App token. It reads one local published manifest snapshot from the installed tooling, validates all three stable keys, and resolves only Build/Review current names and `previousNames`, preserving Approved and its aliases; update the tooling first if its palette is stale. Report mode remains read-only even when opted out. For local apply, an environment value `DELIVERY_LABELS_ENABLED=false` disables writes (case-insensitive, no trimming); the calling repository's variable continues to gate the automatic jobs and is not fetched by this local command. Separate authorization is required regardless of opt-out settings.
 
-Discovery paginates `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100&page=N` and validates the complete list before any mutation; it never treats ordinary issues as PRs. Assignment reads are also paginated. Each PR is freshly re-read for identity and closed state, and apply shares the event cleanup's before-each-removal reopen check, whole-managed-set rescan, bounded retry, confirmed absence and DELETE-404 access checks. Open/reopened PRs are skipped, not relabeled; no definitions are created/deleted, no verdicts added, and unrelated assignments remain unchanged. Read/access/malformed-data and pagination-limit failures fail closed, not as empty results. Apply failures exit nonzero and identify the failed PR; earlier PRs may already have been cleaned, with no rollback. Inspect a fresh report before retrying.
+Discovery paginates `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100&page=N` and validates the complete list before any mutation; it never treats ordinary issues as PRs. Assignment reads are also paginated. Each PR is freshly re-read for identity and closed state, and apply shares the event cleanup's before-each-removal reopen check, whole-transient-set rescan, bounded retry, confirmed absence and DELETE-404 access checks. Open/reopened PRs are skipped, not relabeled; no definitions are created/deleted, no verdicts added, and unrelated assignments remain unchanged. Read/access/malformed-data and pagination-limit failures fail closed, not as empty results. Apply failures exit nonzero and identify the failed PR; earlier PRs may already have been cleaned, with no rollback. Inspect a fresh report before retrying.
 
-GitHub has no atomic delete-if-still-closed operation: reopening between the final state read and DELETE remains possible, just as for event cleanup. Concurrent label/review changes may prevent confirmed cleanup and must fail visibly. Pagination is a bounded best-effort snapshot, not a frozen repository transaction; concurrent closures can require a fresh report and another separately authorized apply. Runners should not add new review labels to closed PRs. A reopened PR simply waits for its next review to set a label; no old verdict is restored.
+GitHub has no atomic delete-if-still-closed operation: reopening between the final state read and DELETE remains possible, just as for event cleanup. Concurrent label/review changes may prevent confirmed cleanup and must fail visibly. Pagination is a bounded best-effort snapshot, not a frozen repository transaction; concurrent closures can require a fresh report and another separately authorized apply. Runners should not add new review labels to closed PRs. A reopened PR keeps any retained Approved record and waits for its next review to set a label; no removed assignment is restored.
 
 ## Permissions and optional default pruning
 
