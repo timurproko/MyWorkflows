@@ -6,7 +6,7 @@ Status: approved for implementation; outcomes tracked below.
 
 Implement the MyWorkflows delivery-bot step of review-before-CI, using `origin/main` as the baseline. The person's decisions override the earlier investigation: approval-bound promotion is the default for every delivery repository, not an opt-in; the only managed stages are Build, Review and Approved; Approved is applied immediately when review covers the current head, independently of CI. There is no intermediate approved/CI stage or chip. Required GitHub checks, not labels, block merge.
 
-This repository has no `openspec/` directory. This committed plan and its draft PR carry the proposal without an Automation block. No implementation begins before approval. No other repository, live label definition, variable, permission or protection policy is changed here. Crew's review gate, waiting, dispatch implementation and delta-review orchestration remain separate work.
+This repository has no `openspec/` directory. This committed plan and its draft PR carry the proposal without an Automation block. The coordinator approved implementation after the plan handoff. No other repository, live label definition, variable, permission or protection policy is changed here. Crew's review gate, waiting, dispatch implementation and delta-review orchestration remain separate work.
 
 ## Implementation outcomes
 
@@ -35,6 +35,8 @@ Status: implemented; 344 focused rename, label-contract, reconciliation, cleanup
 
 ### 3. Shared skill and published contracts describe approval, local testing and migration
 
+Status: implemented; dispatch/local-test/label contracts and publication-race regressions pass. Full-suite and final-head CI evidence belongs in the task report.
+
 - Update the repository's `skills/change-delivery/SKILL.md`, README and delivery docs together. Workers run the full local suite once on the head handed off and list build/test commands and results; CI confirms it. Reviewers check out the reviewed head, build and run the project's full local suite once, and write what they checked. Agents never mark ready, arm auto-merge or merge without explicit permission.
 - Explain that checking all outcomes ends implementation but leaves the draft awaiting approval. Review starts too early are refused with a reason; crew wait does the waiting. Crew owns those implementations in its later task, not this PR.
 - Document Build/Review/Approved, immediate Approved on review acceptance, retained Approved on closure, and CI-failure repair on the existing ready PR followed by delta review. Remove active guidance that retains Review while approved checks run; do not add a Review/CI chip.
@@ -54,4 +56,4 @@ Status: implemented; 344 focused rename, label-contract, reconciliation, cleanup
 
 Add focused Vitest coverage with each delivered outcome, commit/push it and tick the corresponding PR outcome as it lands. Before implementation handoff run `npm test` once and the full generated-palette validation (`node test/generated-palettes.mjs`) on the head handed off; record exact commands and results, without weakening tests or suppressing failures. Reviewers have the same local build/test reporting duty. MyWorkflows has no separate build script.
 
-Bring the branch current with the default branch, add specific Acceptance bullets, validate the final PR body and tick the final outcome only when implemented. Push, pull any delivery-bot commit before subsequent pushes, and do not hand off implementation until its bot publication has landed and every check on the final head has passed. The current trusted workflow on main owns this PR's automation until this change merges; branch changes cannot alter the running trusted workflow. Never mark ready or merge manually. At the plan stage, keep every outcome unchecked and stop for approval; no bot finalization or implementation readiness is claimed.
+Bring the branch current with the default branch, add specific Acceptance bullets, validate the final PR body and tick the final outcome only when implemented. Push, pull any delivery-bot commit before subsequent pushes, and do not hand off implementation until its bot publication has landed and every check on the final head has passed. The current trusted workflow on main owns this PR's automation until this change merges; branch changes cannot alter the running trusted workflow. This PR is plain, so the bot has no archive commit to publish; its final action here is readiness, not a fabricated finalization commit. Never mark ready or merge manually. At the plan stage, keep every outcome unchecked and stop for approval; no bot finalization or implementation readiness is claimed.

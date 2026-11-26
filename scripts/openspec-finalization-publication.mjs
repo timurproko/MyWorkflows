@@ -118,11 +118,11 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
   const head = pull.head.sha;
   const approval = approvalRequested && approvedHead !== null;
   const blocked = reason => ({ disposition: "blocked", reason, head, approvedHead, commits: [] });
+  if (approvedHead && !approvalRequested) return blocked("approval-dispatch-required");
   if (pull.draft && !approvalRequested) return { disposition: "waiting", reason: "awaiting-approval", head, commits: [] };
   if (pull.draft && !approvedHead) return blocked("approval-head-required");
   if (approval && !SHA.test(approvedHead)) return blocked("approval-head-invalid");
   // Only trusted dispatch callers may assert approval; a body fence or ordinary event cannot do so.
-  if (approvedHead && !approvalRequested) return blocked("approval-dispatch-required");
   if (pull.draft && (typeof pull.node_id !== "string" || !pull.node_id)) throw archiveFailure("finalization-candidate-identity");
   const implementation = classified.implementation;
   const change = implementation?.change;
@@ -175,8 +175,9 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
     if (behind) {
       const mergeBase = await git(["merge-base", target, head]);
       if (!SHA.test(mergeBase)) throw archiveFailure("finalization-merge-base");
-      if (archive) {
-        // Existing ready-PR refresh compatibility: restore before merging a changed canonical spec baseline.
+      if (archive && !approval && !pull.draft) {
+        // Legacy ready-PR refresh compatibility only. Approval-bound publication never introduces a restore
+        // commit: its base merges must be clean on the reviewed tree, including archived specs.
         const baseline = await readCanonicalSpecs({ cwd: checkout, sha: mergeBase, env, gitImpl });
         for (const path of scope.specs) {
           const bytes = baseline.get(path);

@@ -293,6 +293,40 @@ describe("trusted finalization publication", () => {
     expect(await f.remoteFile("src/other.txt")).toBe("other");
   }, 120_000);
 
+  it("refuses an uncovered dispatch head without branch, body or readiness writes", async () => {
+    const f = await fixture();
+    f.state.draft = true;
+    const before = await f.remoteHead();
+    await expect(f.reconcile({ approvalRequested: true, approvedHead: "f".repeat(40) })).resolves.toMatchObject({
+      disposition: "blocked", reason: "approval-head-mismatch", head: before,
+    });
+    expect(await f.remoteHead()).toBe(before);
+    expect(f.mutations).toHaveLength(0);
+    expect(f.state.readyCalls).toBe(0);
+  }, 60_000);
+
+  it.each(["head", "body", "base"])("never promotes if %s changes after metadata publication", async boundary => {
+    const f = await fixture();
+    f.state.draft = true;
+    f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
+    const publisher = { ...f.publisher, mutate: async (...args: Parameters<typeof f.publisher.mutate>) => {
+      const result = await f.publisher.mutate(...args);
+      if (boundary === "body") f.state.body += "\n";
+      else {
+        const branch = boundary === "head" ? "feature/example" : "develop";
+        await git(f.seed, ["checkout", "--quiet", branch]);
+        await git(f.seed, ["pull", "--quiet", "origin", branch]);
+        await commit(f.seed, "fix: concurrent writer", { "src/extra.txt": "delta\n" });
+        await git(f.seed, ["push", "--quiet", "origin", branch]);
+      }
+      return result;
+    } };
+    const result = await f.reconcile({ approvalRequested: true, publisher });
+    expect(result).toMatchObject({ disposition: "retry", reason: boundary === "base" ? "draft-target-changed" : "draft-changed-before-ready", bodyUpdated: true });
+    expect(f.state.readyCalls).toBe(0);
+    expect(f.state.draft).toBe(true);
+  }, 90_000);
+
   it("accepts bot-only finalization on retry after readiness failure, but refuses a new human commit", async () => {
     const f = await fixture();
     f.state.draft = true;

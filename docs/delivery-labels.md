@@ -47,7 +47,7 @@ The MyWorkflows-only `Reference labels` workflow uses trusted default-branch too
 
 Names must be nonempty, trimmed, control-character-free and at most 50 Unicode code points; colour must be six hexadecimal digits, description at most 100 code points. Duplicate source identities and case/Unicode-normalization collisions across different roles' current names/alias histories are rejected. Explicit same-role aliases support deliberate case/Unicode-only renames; an unlisted case/normalization collision is never silently adopted. Removing the robot prefix is allowed. Invalid UI edits are reported, not propagated blindly; the UI itself is not rolled back.
 
-Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. The existing delivery bot can promote it and run required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
+Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. After inspecting that bot PR, a person dispatches its approved head (or marks ready manually); the delivery bot can promote it and run required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
 
 A metadata edit reverted to the accepted manifest before merge retires its generated PR: after the usual source/head preflight, the publisher comments that the reference now matches main and closes the PR instead of writing a pointless revert commit. Read-only mode reports `would-retire` without commenting/closing. Alias-history changes remain meaningful and are not discarded just because the display name reverted.
 
@@ -147,7 +147,7 @@ jobs:
 | `timurproko/herdr-app` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
 | `timurproko/crew` | `.github/workflows/review-labels.yml` | `tests.yml`: both assignment actions excluded |
 | `timurproko/a1` | `.github/workflows/review-labels.yml` | `ci.yml`: explicit PR types exclude both; other inspected test entry points do not subscribe to label events or Delivery completion |
-| `timurproko/xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: **already includes both `labeled` and `unlabeled`**; exception below |
+| `timurproko/xrbuild` | `.github/workflows/review-labels.yml` | Historical audit found label triggers; the separate CI-trigger repair is now merged |
 | `timurproko/.xrbuild` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
 | `timurproko/MyConfigs` | `.github/workflows/review-labels.yml` | `ci.yml`: both assignment actions excluded |
 | `timurproko/MyWorkflows` | `.github/workflows/self-review-labels.yml` | `test.yml`: default PR actions exclude both |
@@ -171,20 +171,13 @@ inspect a fresh protection report and obtain separate named-repository authoriza
 `delivery protect --repo owner/name --apply --allow-rule-changes`. This task does not apply policies, change live
 permissions, or claim the new self-caller is live before its path is authorized.
 
-Adding this separate workflow cannot subscribe tests or emit skipped delivery/test checks, and no inspected test
-workflow consumes Review labels or Delivery completion. Thus it does not start tests in the six label-isolated consumers. However,
-xrbuild's existing `.github/workflows/ci.yml` line 10 is:
-
-```yaml
-    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited, labeled, unlabeled]
-```
-
-Its CI already runs on label additions/removals independently of delivery, including App-produced removals. Test
-isolation there cannot honestly be confirmed until a separately authorized consumer change removes only the last
-two entries, yielding `types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]`.
-No such consumer change is made here. herdr-app and crew have already applied that test-trigger exclusion;
-do not undo it. A job-level skip is too late because workflow-level concurrency may already cancel tests.
-Historical cancelled checks are not rewritten or rerun by this change.
+Tests run independently of delivery. Adding this separate workflow cannot subscribe tests or emit skipped
+delivery/test checks, and no inspected test workflow consumes Review labels or Delivery completion. The historical xrbuild audit found both label actions in
+`ci.yml`; the separate first-stage repair has now merged in crew, xrbuild, herdr-app and the private workspace.
+Those test triggers exclude `labeled`, `unlabeled` and body-only `edited`, and their required-check aggregators
+skip cancelled runs. Do not reintroduce those subscriptions. The Delivery caller keeps `edited` for body validation.
+No other repository is edited here. A job-level skip is too late because workflow-level concurrency may already
+cancel tests. Historical cancelled checks are not rewritten or rerun by this change.
 
 ### Open-PR exclusivity and deterministic ordering
 
@@ -221,6 +214,19 @@ and consumer whole-run cancellation can postpone reconciliation. There is no sch
 lease, timer, crash-expiry guarantee or cross-controller lock. GitHub offers no atomic delete-if-still-open-and-latest
 endpoint; the read/DELETE race remains: independent writers or closure/reopen between the last read and DELETE remain a non-atomic race. The
 closed-event job still owns closures; no stale verdict or review label is automatically restored after reopening.
+
+## Approval and local testing
+
+Build is the initial/fix stage, Review is active review, and Approved is set as soon as review covers the current
+head, even when CI is pending. There is no fourth state or Review/CI chip. Workers and reviewers each build and
+run the project's full local suite once on the head they hand off, listing commands and results. A premature
+review is refused with a reason; crew wait does waiting. CI failure after approval returns work to Build on the
+ready PR and requires delta review of new commits, not re-review of the entire approved change.
+
+Promotion waits for approval by default in every delivery repository; labels themselves do not authorize it.
+The precise [dispatch contract, solo-person path and caller/open-draft migration](delivery-approval.md) are the
+interface for crew's later integration. Agents never mark ready. Only the bot after approved-head publication,
+or the person using the manual-ready path, promotes the PR.
 
 ## Runner manifest API and crew contract
 

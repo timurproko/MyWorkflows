@@ -112,8 +112,8 @@ then tick that outcome in the PR body (`[ ]` to `[x]`, nothing else) before star
 - A tick means the code and tests are written. CI, broad test runs and manual validation never delay it; a later
   defect is fixed in a new commit. Never save ticks for handoff, and never tick unfinished work.
 - Adding, removing, reordering or rewording an outcome is a scope change: get approval and update the plan first.
-- Before pushing, run only quick targeted checks of what changed. Do not loop broad local suites; CI on the
-  final head is the integration gate.
+- Use quick targeted checks as each outcome lands. Before handoff, build and run the project's full local test
+  suite once on the head you hand off; CI confirms it. List the build/test commands and results in the report.
 
 ## 4. Finish
 
@@ -125,21 +125,42 @@ Before ticking the **last** outcome:
 3. Bring the branch up to date with the default branch and push.
 4. Check the final body: `delivery check-body --body-file .artifacts/pr-body.md --final`.
 
-Then tick the last outcome. That ends the agent's part. The bot verifies the exact snapshot and marks the PR
-ready, then commits `docs(openspec): finalize <change-id>` to the branch and records the archive in the
-Automation block. Always `git pull` before pushing again; never revert a finalization commit, push fixes on top.
-A fully ticked draft that stays draft means the bot refused it: read the `Delivery` workflow run for the reason.
+Then tick the last outcome and hand off the pushed draft for review. Completed outcomes do not authorize
+promotion: every delivery repository waits for approval by default, without an opt-in variable. The reviewer
+checks out that exact head, builds and runs the project's full local test suite once, and writes the commands,
+results and what was checked in the review report. A too-early review is refused with a reason; crew wait does
+waiting for completed outcomes, matching pushed heads and green light draft checks.
 
-A PR that links no change follows the same steps with the Automation section left out: the bot marks it ready
-when every outcome is ticked and the body is valid, and there is nothing to finalize.
+On approval covering the current head, the review runner sets Approved immediately and dispatches the consumer's
+`delivery.yml` with `pr`, `approved_head=<full-reviewed-sha>` and `dry_run=false` on its default branch. Crew's
+transport is separate work. Only a trusted repository writer/person may assert approval; agents never self-approve
+or dispatch promotion on their own authority. The bot accepts that exact head or proven App-only scoped
+finalization/clean base-merge commits after it, merges the base if clean, and finalizes **on the draft**. It pushes
+`docs(openspec): finalize <change-id>`, records `reviewedHead` and `finalizedHead` in Automation, then marks ready.
+A fully ticked draft normally waits for approval; a refused dispatch explains its reason in the workflow result.
+Always `git pull` before pushing again; never revert a finalization commit, push fixes on top.
+
+A PR that links no change uses the same approval-bound promotion with the Automation section left out; there is
+nothing to archive. A person working alone needs no crew: inspect the pushed head and dispatch its SHA in the
+Actions UI, or mark ready by hand. Agents never mark ready. Existing copied callers need the `approved_head`
+input/forwarding edit; old completed drafts are not grandfathered and already-ready PRs remain ready. See
+`docs/delivery-approval.md` in MyWorkflows for exact inputs, response reasons, bot-only proof and caller migration.
+MyWorkflows itself dispatches `self-delivery.yml`, not its reusable `delivery.yml`.
 
 ## 5. CI and handoff
 
-- Drafts run no test suites. The ready, finalized head gets the repository's tests plus the `Delivery check`.
+- Drafts normally run only light checks; workers and reviewers each build/test locally once on their handoff
+  head. The ready, finalized head gets the repository's tests plus the `Delivery check`; tooling repositories
+  may also test draft changes. Approved does not wait for CI; GitHub's required checks independently block merge.
 - Do not watch CI in the foreground. Read its current result, report it, and repair failures in the same PR
   without weakening a test or a check.
-- Hand off after pushing a plan, after CI is green, and after any repair push: worktree path, branch, commit,
-  change, PR, behaviour, known gaps, and one command the maintainer can run. Say when nothing is runnable.
+- Hand off the pushed implementation draft for review after local testing and successful light checks, then
+  hand off after approval/publication when final-head CI is green. Include worktree path, branch, commit, change,
+  PR, behavior, known gaps, local build/test commands/results and one command the maintainer can run. Plan
+  handoff still stops for approval. Say when nothing is runnable.
+- When CI fails after approval, fix on the ready PR, build/test once on the repaired head and push. Review only
+  the new commits (delta review), restoring Approved immediately when they are approved; do not wait for CI to
+  set that label and do not convert back to draft merely to avoid a necessary CI run.
 
 ### Final agent review labels
 
@@ -217,7 +238,7 @@ satisfy GitHub protection and overwrite a failed gate: label runs must never cal
 behind a job-level skip. Only the distinct non-required `review-labels / Reconcile managed review labels (advisory)`
 check is published. Public repositories also authorize the new caller path in their Actions-policy allowlist;
 no policy change or apply is automatic. See `docs/delivery-labels.md` for exact caller files and named-repository
-consent requirements. xrbuild's existing CI label subscription needs a separate consumer fix for test isolation.
+consent requirements. The earlier xrbuild CI label subscription was repaired separately; never reintroduce it.
 
 Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
 assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository

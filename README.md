@@ -8,13 +8,18 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 1. An agent opens a **draft** pull request whose body has `## Proposal`, `## Implementation` (checkboxes),
    later `## Acceptance`, and an `## Automation` block linking the OpenSpec change.
 2. The agent ticks each Implementation checkbox as that outcome is written and pushed.
-3. When every checkbox is ticked and the body is valid, the delivery bot marks the PR ready for review.
-4. The bot finalizes the linked OpenSpec change in the PR branch (sync specs, archive, record the finalized head).
-5. The repository's own CI runs its tests. The maintainer merges, or arms auto-merge.
+3. The worker builds/tests locally once on the pushed handoff head; the draft waits for approval by default.
+   The reviewer checks out that head, builds/tests the full local suite once and reports commands/results.
+4. After approval, a trusted writer dispatches the reviewed SHA. The bot merges the base if clean, finalizes
+   the linked change on the draft, records reviewed/finalized heads, and only then marks ready.
+5. The repository's own CI confirms the final head. Approved is set immediately on review approval, independently
+   of CI; required checks still block merge. The maintainer merges, or arms auto-merge.
 6. After a merge, the bot deletes the merged branch and brings other ready PRs up to date.
 
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
-for that PR, and only with green CI on its current head.
+for that PR, and only with green CI on its current head. Ticking all outcomes no longer promotes a draft.
+A person working alone can approve by dispatching the exact head in Actions, without crew, or manually mark ready.
+See [approval dispatch, response reasons and migration for open drafts](docs/delivery-approval.md).
 
 ## Ready pull-request refresh
 
@@ -103,7 +108,8 @@ prevents an older queued event winning. API failures, history delays, queue canc
 read/DELETE race remain best-effort limits; no labels are added or restored.
 Add the separate tiny caller from `templates/review-labels-caller.yml`, triggered by only `labeled`; keep both label
 actions out of delivery and test triggers. The [exact seven-consumer caller files and policy/test audit](docs/delivery-labels.md#scheduling-and-assignment-only-events)
-include required Actions-policy allowlisting and xrbuild's existing label-triggered CI exception; other inspected consumer test workflows exclude labels.
+include required Actions-policy allowlisting and the historical xrbuild label-triggered CI issue, repaired separately.
+Keep label additions/removals and body-only edits out of test triggers.
 Older closed PRs are not swept automatically. `delivery labels-sweep --repo owner/name` is an explicit,
 read-only report; `--apply` removes only managed assignments on still-closed PRs, with pagination and reopen
 checks. Obtain separate named-repository authorization and inspect a fresh report before applying; the command
@@ -230,7 +236,7 @@ does not bypass GitHub's plan or permission restrictions.
 ## Layout
 
 - `scripts/` - the automation, imported from `timurproko/a1` and made repository-independent.
-- `.github/workflows/delivery.yml` - the reusable workflow callers use: promote and finalize, delivery check,
+- `.github/workflows/delivery.yml` - the reusable workflow callers use: finalize on draft then promote on approval, delivery check,
   ready-PR refresh, merged-branch deletion.
 - `skills/change-delivery/` - the one agent skill for every repository.
 - `bin/delivery.mjs` - the local command.
@@ -242,7 +248,7 @@ does not bypass GitHub's plan or permission restrictions.
 
 In use by `timurproko/a1`, `timurproko/crew`, `timurproko/herdr-app` (scaffold only; source import pending),
 `timurproko/xrbuild`, its private workspace repository, and this repository itself
-(`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line), so a change to the shared
+(`.github/workflows/self-delivery.yml`, the caller template with a local `uses` line and dispatch filename), so a change to the shared
 automation is exercised by the next pull request here. Covered: promotion and
 finalization, the delivery check, ready-PR refresh, merged-branch deletion, plain delivery without OpenSpec, the
 shared skill, local worktree cleanup and the machine bootstrap.

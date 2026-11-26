@@ -63,6 +63,7 @@ export async function main(args = process.argv.slice(2), environment = process.e
         toolRoot: resolve(root, "node_modules/@fission-ai/openspec") });
     } finally { await publisher.close().catch(() => { /* Security: token expiry remains the final bound. */ }); }
   }
+  result = { number, ...result };
   if (environment.GITHUB_STEP_SUMMARY) {
     await appendFile(environment.GITHUB_STEP_SUMMARY, `## OpenSpec finalization${dryRun ? " audit" : ""}\n${summaryLine(number, result)}\n`);
   }
@@ -74,7 +75,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const code = error.archiveCode ?? "internal-error";
     const detail = error.archiveDetail ? `: ${error.archiveDetail}` : "";
     console.error(`OpenSpec finalization blocked: ${code}${detail}`);
-    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## OpenSpec finalization\n- blocked: \`${code}${detail}\`; nothing was pushed\n`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## OpenSpec finalization\n- blocked: \`${code}${detail}\`; inspect the branch and body before retrying: publication may have partially completed\n`);
     process.exitCode = 1;
   });
 }
