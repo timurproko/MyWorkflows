@@ -152,7 +152,7 @@ trimming). Unset, empty, `true` and any other value remain enabled. Do not creat
 | --- | --- | --- | --- |
 | `under-review` | 🤖 Review | `840479` | 🤖 Under review |
 | `review-approved` | 🤖 Approved | `1a7f37` | none |
-| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
+| `review-changes-needed` | 🤖 Build | `9a6700` | 🤖 Rework, 🤖 Changes needed |
 
 Initially each has an empty description, U+1F916 and one ordinary space, with no variation selector.
 Future valid names can omit the robot prefix. Never identify a role from a display name. MyWorkflows' GitHub
@@ -174,8 +174,11 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Use the runner's signed-in credential, not the delivery App private key, and ordinary PR label operations.
   At review start, add current `under-review` and clear both verdict keys' current/historical assignments
   before launching the reviewer, even on a draft or pending-CI PR. Resolve the implementation PR, not a Plan report.
-- On `APPROVE`, clear current/historical review-in-progress and opposite-verdict assignments and add current
-  `review-approved`; on `CHANGES NEEDED`, do the same and add current `review-changes-needed`.
+- Build means building or fixing, including after review or CI failure; Review means an active review.
+  On `APPROVE` that covers the current head, immediately clear current/historical review-in-progress and
+  opposite-verdict assignments and add current `review-approved`, without waiting for CI. GitHub checks show CI
+  separately; there is no intermediate approved/CI stage. On `CHANGES NEEDED`, do the same and add current
+  `review-changes-needed` (Build).
   Verdicts are mutually exclusive; preserve unrelated labels.
 - On failed launch/report, stop, finish, observed death or abandonment, clear current/historical in-progress
   assignments without inventing a verdict. Make retries idempotent and report permission/API failures.
@@ -183,9 +186,10 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Complete old cleanup before replacement. Use one owner per PR or retain the label until that owner's last
   local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
 - All three labels are advisory, never required checks or merge gates; absence is not approval. A retained
-  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes all three managed roles'
-  current/historical assignments, including both verdicts. No verdict is added; unrelated labels remain untouched.
-  A reopened PR has no robot review label until the next review sets one; removed assignments are not restored.
+  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes Build and Review
+  current/historical assignments; Approved stays as the record, including its aliases. No verdict is added;
+  unrelated labels remain untouched. A reopened PR keeps that record until the next review sets one;
+  removed assignments are not restored.
   Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or automatic historical sweep. A lost runner
   may leave an open PR labeled until recovery or a person clears it. Crew integration is separate work in crew.
 - Consumer sync renames an existing previous-name definition with PATCH `new_name`, preserving assignments.

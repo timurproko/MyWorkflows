@@ -30,10 +30,11 @@
       }
     },
     "review-changes-needed": {
-      "name": "🤖 Rework",
+      "name": "🤖 Build",
       "color": "9a6700",
       "description": "",
       "previousNames": [
+        "🤖 Rework",
         "🤖 Changes needed"
       ],
       "reference": {

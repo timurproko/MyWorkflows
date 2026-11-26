@@ -24,6 +24,8 @@ Status: implemented; 72 focused publication, approval, plain-delivery, gate, CLI
 
 ### 2. The three managed stages are Build, Review and Approved with assignment-preserving migration
 
+Status: implemented; 344 focused rename, label-contract, reconciliation, cleanup, sweep and reference tests pass.
+
 - Rename the existing changes-needed/Rework role's display name to `🤖 Build`, keeping its stable manifest role identity and reference GitHub id/node id. Include both `🤖 Rework` and `🤖 Changes needed` in `previousNames`; keep the amber color. Do not create a fourth role or make existing consumer assignments disappear.
 - Keep Review purple and Approved green. Build means building/fixing, including after a review or CI failure; Review means an active review; Approved means approval covers the current head immediately, even while checks are pending. CI status belongs to GitHub checks, not an extra label or stage.
 - Ensure definition synchronization renames an old definition with PATCH `new_name`, preserving assignments. Preserve collision reporting and reference-drift safeguards rather than deleting old definitions or silently rebinding source identities. Cover migration from either old name, new/old coexistence and identity preservation.

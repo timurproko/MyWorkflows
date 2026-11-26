@@ -27,12 +27,19 @@ describe("assignment-preserving alias migration", () => {
     expect(api.mock.calls.every(([method]) => method === "GET")).toBe(true);
     await syncLabels({ repository, api, apply: true });
     expect(labels.map(label => label.id)).toEqual([1, 2, 3]);
-    expect(labels.map(label => label.name)).toEqual(["🤖 Review", "🤖 Approved", "🤖 Rework"]);
+    expect(labels.map(label => label.name)).toEqual(["🤖 Review", "🤖 Approved", "🤖 Build"]);
     expect(api.mock.calls.filter(([method]) => method !== "GET")).toEqual([
       ["PATCH", `repos/${repository}/labels/${encodeURIComponent("🤖 Under review")}`, { new_name: "🤖 Review", color: "840479", description: "" }],
-      ["PATCH", `repos/${repository}/labels/${encodeURIComponent("🤖 Changes needed")}`, { new_name: "🤖 Rework", color: "9a6700", description: "" }],
+      ["PATCH", `repos/${repository}/labels/${encodeURIComponent("🤖 Changes needed")}`, { new_name: "🤖 Build", color: "9a6700", description: "" }],
     ]);
     expect((await syncLabels({ repository, api, apply: true })).labels.every(item => item.action === "unchanged")).toBe(true);
+  });
+
+  it.each(["🤖 Rework", "🤖 Changes needed"])("renames %s to Build on the same definition and retains its assignments", async previous => {
+    const { api, labels } = fake([{ name: previous, color: "9a6700", description: "", id: 42, assignments: [7, 19] }]);
+    const result = await syncLabels({ repository, api, apply: true });
+    expect(result.labels.find(label => label.key === "review-changes-needed")).toMatchObject({ action: "rename", previousName: previous, name: "🤖 Build" });
+    expect(labels.find(label => label.id === 42)).toMatchObject({ name: "🤖 Build", assignments: [7, 19] });
   });
 
   it("keeps an existing new definition and reports/preserves old definitions without deleting", async () => {
@@ -40,7 +47,7 @@ describe("assignment-preserving alias migration", () => {
     const result = await syncLabels({ repository, api, apply: true });
     expect(result.conflicts).toEqual([
       { key: "under-review", kept: "🤖 Review", preserved: ["🤖 Under review"] },
-      { key: "review-changes-needed", kept: "🤖 Rework", preserved: ["🤖 Changes needed"] },
+      { key: "review-changes-needed", kept: "🤖 Build", preserved: ["🤖 Changes needed"] },
     ]);
     expect(labels).toHaveLength(5);
     expect(result.preserved).toEqual(["🤖 Under review", "🤖 Changes needed"]);

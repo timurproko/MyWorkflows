@@ -54,7 +54,7 @@ optional override described below.
 | --- | --- | --- | --- |
 | `under-review` | 🤖 Review | `840479` | 🤖 Under review |
 | `review-approved` | 🤖 Approved | `1a7f37` | none |
-| `review-changes-needed` | 🤖 Rework | `9a6700` | 🤖 Changes needed |
+| `review-changes-needed` | 🤖 Build | `9a6700` | 🤖 Rework, 🤖 Changes needed |
 
 Initially each has an empty description; names start with U+1F916 and one ordinary space, without a variation selector.
 The reference is these managed labels on **MyWorkflows' GitHub Labels page**, bound by GitHub id/node id.
@@ -79,11 +79,14 @@ Omitting `ref` resolves the default branch; explicit discovery is equivalent. A 
 Warned fallback to the initial names and legacy aliases is allowed on read/validation failure, never silently;
 crew uses one request with a two-second timeout. Crew implementation remains a separate task, retaining crew PR #7's limits.
 At review start, add current `under-review` and clear both verdict keys' current/historical assignments before launching the reviewer.
-On `APPROVE` use current `review-approved`; on `CHANGES NEEDED` use current `review-changes-needed`, clearing review/other-verdict aliases.
+On `APPROVE` use current `review-approved` immediately when approval covers the current head, without waiting for CI;
+on `CHANGES NEEDED` use current `review-changes-needed` (Build), clearing review/other-verdict aliases.
 Verdicts are mutually exclusive. Failed launch/report, stop, finish, observed death or abandonment clears only
-in-progress names without inventing a verdict. Closed/merged cleanup removes all three managed roles'
-current/historical assignments, including both verdicts. Unrelated labels are preserved. A reopened PR has no
-robot review label until the next review sets one; cleanup never restores removed assignments.
+in-progress names without inventing a verdict. Closed/merged cleanup removes Build and Review
+current/historical assignments; Approved stays as the record, including its aliases. Unrelated labels are preserved.
+A reopened PR keeps that record until the next review sets one; cleanup never restores removed assignments.
+Build means building/fixing, including after review or CI failure; Review means an active review; Approved means
+approval covers the current head. There is no intermediate approved/CI stage; GitHub checks show CI separately.
 All three labels are advisory; absence is not approval, and a retained verdict does not guarantee later commits were reviewed.
 The runner uses its signed-in credential; no heartbeat, lease or timed crash-expiry guarantee is added.
 Existing App Pull requests write permission suffices; no added Issues grant or caller permission change is needed.

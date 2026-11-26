@@ -44,6 +44,7 @@ export async function reconcileReviewLabels({ repository, event, api = labelApi,
   }
   if (event.pull_request.state !== "open" || event.pull_request.merged === true) return { number, disposition: "closed" };
   manifest ??= await loadBaseLabels();
+  // Open-PR exclusivity includes the Approved record; closure cleanup intentionally does not.
   const names = managedReviewNames(manifest);
   if (!names.includes(event.label.name)) return { number, disposition: "unmanaged" };
   const prefix = `repos/${repository}`;

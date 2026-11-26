@@ -222,12 +222,12 @@ describe("latest managed review-label reconciliation", () => {
     expect(writes(source.api)).toHaveLength(1);
   });
 
-  it("converges and stays idempotent for every subset and possible winner of seven managed names", async () => {
+  it("converges and stays idempotent for every subset and possible winner of eight managed names", async () => {
     const manifest = structuredClone(definitions);
     manifest.labels["under-review"].previousNames.push("Oldest reading");
     manifest.labels["review-approved"].previousNames.push("Previously approved");
     const palette = Object.values(manifest.labels).flatMap(label => [label.name, ...label.previousNames]);
-    expect(palette).toHaveLength(7);
+    expect(palette).toHaveLength(8);
     for (let mask = 1; mask < 1 << palette.length; mask++) {
       const subset = palette.filter((_, index) => mask & 1 << index);
       for (const winner of subset) {

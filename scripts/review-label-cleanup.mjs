@@ -7,6 +7,12 @@ export function managedReviewNames(manifest) {
   return keys.flatMap(key => labelNames(manifest.labels[key]));
 }
 
+/** Closure clears transient Build/Review stages, not the Approved record (including its aliases). */
+export function closedReviewNames(manifest) {
+  managedReviewNames(manifest); // Still require and validate all three stable roles.
+  return ["under-review", "review-changes-needed"].flatMap(key => labelNames(manifest.labels[key]));
+}
+
 /** Event-only final fallback. Normal review lifetime is owned by the signed-in review runner. */
 export async function cleanupReviewLabel({ repository, event, api = labelApi, manifest }) {
   validateRepository(repository);
@@ -23,7 +29,7 @@ export async function cleanupReviewLabel({ repository, event, api = labelApi, ma
 export async function cleanupClosedReviewLabels({ repository, number, api = labelApi, manifest, apply = false }) {
   validateRepository(repository);
   if (!Number.isSafeInteger(number) || number < 1) throw new Error("invalid pull-request number");
-  const names = managedReviewNames(manifest === undefined ? await loadBaseLabels() : manifest);
+  const names = closedReviewNames(manifest === undefined ? await loadBaseLabels() : manifest);
   const prefix = `repos/${repository}`;
   async function currentState() {
     const pull = await api("GET", `${prefix}/pulls/${number}`);
@@ -52,7 +58,7 @@ export async function cleanupClosedReviewLabels({ repository, number, api = labe
   }
   let removed = false;
   // Sync can rename an assigned definition while this independent job is removing it.
-  // Rescan every managed role after removals/404s, not just the now-missing old spelling.
+  // Rescan both transient roles after removals/404s, not just the now-missing old spelling.
   for (let pass = 0; pass <= names.length; pass++) {
     const assigned = await assignedReviewNames();
     if (!assigned.length) return { number, disposition: await currentState() === "open" ? "reopened" : removed ? "removed" : "absent" };
