@@ -12,7 +12,7 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 4. The bot finalizes the linked OpenSpec change in the PR branch (sync specs, archive, record the finalized head).
 5. The agent reports as soon as the work is pushed; CI and the review start together. Approved means the review
    approved that commit and CI is green on that same commit. The maintainer merges, or arms auto-merge.
-6. After a merge, the bot deletes the merged branch and brings other ready PRs up to date.
+6. After a merge, the bot deletes the merged branch and refreshes ready PRs only for strict protection or conflicts.
 
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
 for that PR, and only with green CI on its current head. Promotion remains automatic on completed outcomes;
@@ -25,8 +25,12 @@ The shared skill contains the complete loop.
 
 ## Ready pull-request refresh
 
-After a merge, the shared job refreshes stale, ready PRs with same-repository heads against the delivery target,
-using the observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+After a merge, the shared job reads active default-branch rulesets and checks ready same-repository PRs against
+the delivery target. A conflict-free PR that is merely behind is left untouched under non-strict protection,
+preserving its reviewed head and avoiding another full CI run. Refresh is attempted only when an active required-check
+rule is strict or GitHub reports a merge conflict. Unknown mergeability is deferred; unavailable/malformed rules
+never authorize a write. Conflicts that GitHub cannot merge require manual resolution. Updates still use the
+observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
 Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
 not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
 Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
@@ -199,7 +203,8 @@ optional label exclusivity must also declare/authorize the separate review-label
 With several agents working in one repository, strict checks sent every open PR back through a base merge and
 full CI run after each merge. The shared builder now sets `strict_required_status_checks_policy: false`, including
 for repository overrides. Required checks still gate every merge; CI on the default branch catches the rare case
-of two changes that pass separately and break together. Existing ready-PR refresh automation is otherwise unchanged.
+of two changes that pass separately and break together. Ready-PR refresh consults live active rulesets, not merely
+the new desired default, so still-strict repositories retain automatic base refresh while non-strict clean heads stay untouched.
 This changes the tool's desired policy, not live rulesets: it takes effect in each repository when protection is
 next explicitly applied with consent. See [application and migration](docs/protection-migration.md).
 

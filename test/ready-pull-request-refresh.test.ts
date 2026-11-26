@@ -4,11 +4,13 @@ import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import { buildRuleset, DEFAULT_DECLARATIONS } from "../scripts/repository-protection.mjs";
 import {
   classifyRefreshCandidate,
   decideRefresh,
   interpretBranchUpdate,
   refreshReadyPullRequests,
+  strictRefreshRequired,
   type RefreshRequester,
 } from "../scripts/ready-pull-request-refresh.mjs";
 
@@ -31,6 +33,7 @@ interface FakePull {
   title?: string;
   behind?: number;
   conflict?: boolean;
+  mergeable?: boolean | null;
   raceTo?: string;
   updateStatus?: number;
   updateMessage?: unknown;
@@ -45,6 +48,7 @@ function metadata(pull: FakePull): Record<string, unknown> {
     title: pull.title ?? "A change",
     state: pull.state ?? "open",
     draft: pull.draft ?? false,
+    mergeable: pull.mergeable === undefined ? !pull.conflict : pull.mergeable,
     base: { ref: pull.base ?? "develop", repo: { full_name: pull.baseRepository ?? repository } },
     head: { sha: pull.head, repo: pull.headRepository === null ? null : { full_name: pull.headRepository ?? repository } },
   };
@@ -56,7 +60,9 @@ class FakeGitHub {
   private readonly pulls: Map<number, FakePull>;
   private revision = 1000;
 
-  constructor(pulls: readonly FakePull[]) {
+  // Legacy API-response cases deliberately exercise strict repositories; policy regressions pass builder output.
+  constructor(pulls: readonly FakePull[], readonly rules: unknown = [{ type: "required_status_checks",
+    parameters: { strict_required_status_checks_policy: true } }]) {
     this.pulls = new Map(pulls.map(pull => [pull.number, { ...pull }]));
   }
 
@@ -75,6 +81,10 @@ class FakeGitHub {
     if (listing) {
       const page = Number(listing[1]);
       return { status: 200, body: [...this.pulls.values()].slice((page - 1) * 100, page * 100).map(pull => ({ number: pull.number })) };
+    }
+    if (path.startsWith(`${prefix}/rules/branches/develop?`)) {
+      const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+      return { status: 200, body: Array.isArray(this.rules) ? this.rules.slice((page - 1) * 100, page * 100) : this.rules };
     }
     if (path === `${prefix}/git/ref/heads/develop`) return { status: 200, body: { object: { sha: target } } };
     const compare = new RegExp(`^${prefix}/compare/${target}\\.\\.\\.([0-9a-f]{40})\\?per_page=1$`).exec(path);
@@ -134,7 +144,10 @@ describe("ready pull-request refresh classification", () => {
   it("updates only heads that lack the current target", () => {
     const eligible = classifyRefreshCandidate(metadata({ number: 7, head: sha(1) }), repository);
     expect(decideRefresh(eligible, { behind_by: 0 }, target).disposition).toBe("current");
-    expect(decideRefresh(eligible, { behind_by: 3 }, target)).toMatchObject({ disposition: "update", behindBy: 3, targetSha: target });
+    expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: true })).toMatchObject({ disposition: "update", behindBy: 3, targetSha: target });
+    expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: false, mergeable: true })).toMatchObject({ disposition: "skipped" });
+    expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: false, mergeable: false })).toMatchObject({ disposition: "update" });
+    expect(decideRefresh(eligible, { behind_by: 3 }, target)).toMatchObject({ disposition: "deferred" });
     expect(decideRefresh(eligible, { behind_by: "3" }, target).disposition).toBe("failed");
     expect(decideRefresh(eligible, undefined, target).disposition).toBe("failed");
   });
@@ -149,6 +162,81 @@ describe("ready pull-request refresh classification", () => {
     expect(interpretBranchUpdate(decision, { status: 422 }).disposition).toBe("failed");
     expect(interpretBranchUpdate(decision, { status: 403 }).disposition).toBe("failed");
     expect(interpretBranchUpdate(decision, { status: 403, body: { message: integrationRefusal } })).toMatchObject({ disposition: "skipped", permissionDenied: true });
+  });
+});
+
+describe("refresh follows live protection instead of creating non-strict CI churn", () => {
+  it.each([DEFAULT_DECLARATIONS[0], { kind: "default-branch", checks: ["Project tests"] }])(
+    "leaves an independent ready head untouched after another PR merges with policy %j", async declaration => {
+      const rules = buildRuleset(declaration, "develop").rules;
+      expect(strictRefreshRequired(rules)).toBe(false);
+      const github = new FakeGitHub([
+        { number: 1, head: sha(1), state: "closed" },
+        { number: 2, head: sha(2), behind: 1 },
+      ], rules);
+      const results = await refreshReadyPullRequests({ repository, request: github.request });
+      expect(results[1]).toMatchObject({ disposition: "skipped", headSha: sha(2), behindBy: 1, reason: expect.stringContaining("merely behind") });
+      await refreshReadyPullRequests({ repository, request: github.request }); // Duplicate/forwarded completion is also read-only.
+      expect(github.updates).toEqual([]);
+      expect((await github.request(`/repos/${repository}/pulls/2`)).body.head.sha).toBe(sha(2));
+    });
+
+  it("still refreshes a behind head when live protection remains strict despite the new non-strict default", async () => {
+    const rules = buildRuleset(DEFAULT_DECLARATIONS[0], "develop").rules;
+    rules.find(rule => rule.type === "required_status_checks")!.parameters.strict_required_status_checks_policy = true;
+    const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
+    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0]).toMatchObject({ disposition: "updated" });
+    expect(github.updates).toEqual([{ number: 2, expected: sha(2) }]);
+  });
+
+  it("attempts conflicts but defers unknown mergeability without touching clean non-strict siblings", async () => {
+    const github = new FakeGitHub([
+      { number: 1, head: sha(1), behind: 1, conflict: true },
+      { number: 2, head: sha(2), behind: 1, mergeable: null },
+      { number: 3, head: sha(3), behind: 1 },
+      { number: 4, head: sha(4), behind: 0 },
+    ], buildRuleset(DEFAULT_DECLARATIONS[0], "develop").rules);
+    const results = await refreshReadyPullRequests({ repository, request: github.request });
+    expect(results.map(result => result.disposition)).toEqual(["blocked", "deferred", "skipped", "current"]);
+    expect(github.updates).toEqual([{ number: 1, expected: sha(1) }]);
+    expect(github.calls.filter(call => call.includes("/rules/branches/"))).toHaveLength(1);
+  });
+
+  it("honors any active strict ruleset, including inherited protection, and permits repositories with no rules", async () => {
+    const rules = buildRuleset(DEFAULT_DECLARATIONS[0], "develop").rules;
+    expect(strictRefreshRequired([...rules, { type: "required_status_checks", parameters: { strict_required_status_checks_policy: true } }])).toBe(true);
+    expect(strictRefreshRequired([])).toBe(false);
+    const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], []);
+    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0].disposition).toBe("skipped");
+    expect(github.updates).toEqual([]);
+  });
+
+  it("reads later pages of effective rules before deciding whether a clean behind head needs refresh", async () => {
+    const rules = [...Array.from({ length: 100 }, () => ({ type: "pull_request" })),
+      { type: "required_status_checks", parameters: { strict_required_status_checks_policy: true } }];
+    const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
+    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0].disposition).toBe("updated");
+    expect(github.calls).toContain(`GET /repos/${repository}/rules/branches/develop?per_page=100&page=2`);
+    const bounded = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
+    expect((await refreshReadyPullRequests({ repository, request: bounded.request, maxPages: 1 }))[0].disposition).toBe("failed");
+    expect(bounded.updates).toEqual([]);
+  });
+
+  it.each([null, {}, [{ type: "required_status_checks" }], [{ type: "required_status_checks", parameters: { strict_required_status_checks_policy: "false" } }]])(
+    "never authorizes writes from malformed active protection %j", async rules => {
+      const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
+      expect((await refreshReadyPullRequests({ repository, request: github.request }))[0].disposition).toBe("failed");
+      expect(github.updates).toEqual([]);
+    });
+
+  it("does not interpret unavailable active rules as a reason to refresh", async () => {
+    const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }]);
+    const request: RefreshRequester = async (path, options) => {
+      if (path.includes("/rules/branches/")) throw Object.assign(new Error("rules unavailable"), { status: 500 });
+      return github.request(path, options);
+    };
+    expect((await refreshReadyPullRequests({ repository, request }))[0]).toMatchObject({ disposition: "failed", reason: "rules unavailable" });
+    expect(github.updates).toEqual([]);
   });
 });
 
@@ -263,13 +351,14 @@ describe("ready pull-request refresh reconciliation", () => {
     expect(github.updates.map(update => update.number)).toEqual([1]);
   });
 
-  it.each(["listing", "pull read", "target read", "comparison"])("still aborts a 403 on %s", async stage => {
+  it.each(["listing", "pull read", "target read", "comparison", "active rules"])("still aborts a 403 on %s", async stage => {
     const github = new FakeGitHub([{ number: 1, head: sha(1), behind: 1 }, { number: 2, head: sha(2), behind: 1 }]);
     const request: RefreshRequester = async (path, options) => {
       if ((stage === "listing" && path.includes("state=open"))
         || (stage === "pull read" && path.endsWith("/pulls/1"))
         || (stage === "target read" && path.includes("/git/ref/"))
-        || (stage === "comparison" && path.includes("/compare/"))) {
+        || (stage === "comparison" && path.includes("/compare/"))
+        || (stage === "active rules" && path.includes("/rules/branches/"))) {
         throw Object.assign(new Error(integrationRefusal), { status: 403 });
       }
       return github.request(path, options);
