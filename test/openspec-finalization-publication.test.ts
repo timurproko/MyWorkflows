@@ -340,12 +340,12 @@ describe("trusted finalization publication", () => {
     expect(await f.remoteFile("src/app.txt")).toBe("repaired");
   }, 90_000);
 
-  it.each(["src/independent.txt", "openspec/specs/other/spec.md"])("preserves exact finalized heads, metadata and gates after independent %s merges", async path => {
+  it.each(["src/independent.txt", "openspec/specs/other/spec.md", "openspec/config.yaml"])("preserves exact finalized heads, metadata and gates after independent %s merges", async path => {
     const f = await fixture();
     const first = await f.reconcile();
     const originalBody = f.state.body;
     await git(f.seed, ["checkout", "--quiet", "develop"]);
-    await commit(f.seed, "feat: independent", { [path]: "independent\n" });
+    await commit(f.seed, "feat: independent", { [path]: path === "openspec/config.yaml" ? "schema: spec-driven\n# independent comment\n" : "independent\n" });
     await git(f.seed, ["push", "--quiet", "origin", "develop"]);
     await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [], bodyUpdated: false });
     expect(await f.remoteHead()).toBe(first.pushedHead);
@@ -361,7 +361,39 @@ describe("trusted finalization publication", () => {
     expect(f.mutations).toHaveLength(1);
   }, 120_000);
 
-  it("finalizes a ready active head without merging an independent target", async () => {
+  it("replays changed inputs without rewriting identical finalized output", async () => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    const canonical = await f.remoteFile("openspec/specs/example/spec.md");
+    const originalBody = f.state.body;
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    await commit(f.seed, "docs: independently deliver same spec", { "openspec/specs/example/spec.md": `${canonical}\n`,
+      "openspec/specs/other/spec.md": "independent\n" });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [] });
+    expect(await f.remoteHead()).toBe(first.pushedHead);
+    expect(f.state.body).toBe(originalBody);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+  }, 120_000);
+
+  it("defers a ready publication when the target moves before pushing", async () => {
+    const f = await fixture();
+    const head = await f.remoteHead();
+    let reads = 0;
+    const reader = { ...f.reader, async get(path: string) {
+      if (path.endsWith("/git/ref/heads/develop") && ++reads === 2) {
+        await git(f.seed, ["checkout", "--quiet", "develop"]);
+        await commit(f.seed, "feat: raced target", { "src/independent.txt": "new\n" });
+        await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+      }
+      return await f.reader.get(path);
+    } };
+    await expect(f.reconcile({ reader })).resolves.toMatchObject({ disposition: "retry", reason: "target-changed-before-push", pushedHead: head, bodyUpdated: false });
+    expect(await f.remoteHead()).toBe(head);
+    expect(f.mutations).toHaveLength(0);
+  }, 120_000);
+
+  it("finalizes a ready active head without merging an independent target",  async () => {
     const f = await fixture();
     await git(f.seed, ["checkout", "--quiet", "develop"]);
     await commit(f.seed, "feat: independent", { "openspec/specs/other/spec.md": "other\n" });

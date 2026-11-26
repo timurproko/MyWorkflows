@@ -32,7 +32,12 @@ describe("semantic base impact", () => {
     expect(await classifySpecBase({ ...fixture(undefined, { [spec]: "new" }), replay })).toMatchObject({ disposition: "valid" });
     expect(replay).toHaveBeenCalledOnce();
   });
-  it.each(["openspec/config.yaml", "openspec/schemas/custom/schema.yaml", `${archive}tasks.md`, "openspec/changes/example/tasks.md"])(
+  it("replays configuration changes instead of refreshing for comments or unrelated schemas", async () => {
+    const f = fixture(undefined, { [spec]: "old", "openspec/config.yaml": "schema: spec-driven\n# comment" });
+    expect(await classifySpecBase({ ...f, replay: async () => true })).toMatchObject({ disposition: "valid" });
+    expect(await classifySpecBase(f)).toMatchObject({ disposition: "invalidated", paths: ["openspec/config.yaml"] });
+  });
+  it.each([`${archive}tasks.md`, "openspec/changes/example/tasks.md"])(
     "invalidates changed configuration or colliding delivery input %s", async path => {
       expect(await classifySpecBase(fixture(undefined, { [spec]: "old", [path]: "new" }))).toMatchObject({ disposition: "invalidated", path });
     });

@@ -20,27 +20,30 @@ export async function classifySpecBase({ baseline, target, head, change, archive
   const specs = [...candidate.entries.keys()].filter(path => path.startsWith(deltaRoot) && path.endsWith("/spec.md"))
     .map(path => `openspec/specs/${path.slice(deltaRoot.length)}`);
   const paths = new Set([...before.entries.keys(), ...after.entries.keys()]);
-  // Configuration/schema changes and another copy of this change are real finalization-input drift.
-  const sensitive = [...paths].filter(path => path === "openspec/config.yaml" || path.startsWith("openspec/schemas/")
-    || path.startsWith(`openspec/changes/${change}/`)
+  // Another copy of this change is a collision, not ordinary baseline freshness.
+  const sensitive = [...paths].filter(path => path.startsWith(`openspec/changes/${change}/`)
     || path.startsWith("openspec/changes/archive/") && new RegExp(`^openspec/changes/archive/\\d{4}-\\d{2}-\\d{2}-${change}/`).test(path));
   for (const path of sensitive) {
     if (!same(await before.blob(path), await after.blob(path))) return { disposition: "invalidated", reason: "finalization inputs changed", path };
   }
+  const configurationPaths = [];
+  for (const path of [...paths].filter(path => path === "openspec/config.yaml" || path.startsWith("openspec/schemas/"))) {
+    if (!same(await before.blob(path), await after.blob(path))) configurationPaths.push(path);
+  }
   const changed = [];
   for (const path of specs) if (!same(await before.blob(path), await after.blob(path))) changed.push(path);
-  if (!changed.length) return { disposition: "valid", reason: "independent target advance" };
-  // An archived delivery can replay against the new baseline without rewriting its provenance.
-  if (archive && replay && await replay({ candidate, target: after, specs })) {
+  if (!changed.length && !configurationPaths.length) return { disposition: "valid", reason: "independent target advance" };
+  // Even config comments may be independent: validate/replay with current config before requesting repair.
+  if (archive && replay && await replay({ candidate, target: after, specs, configurationPaths })) {
     return { disposition: "valid", reason: "delta replay preserves finalized specs" };
   }
-  return { disposition: "invalidated", reason: "affected canonical specs changed", paths: changed };
+  return { disposition: "invalidated", reason: "affected finalization inputs changed", paths: [...changed, ...configurationPaths] };
 }
 
 /** Replay using only the centrally pinned tool, in a data-only sandbox, with no inherited credentials/hooks.
  * Ignore provenance-only acceptance.md differences; compare every affected output, including deletions.
  */
-export async function replaySpecSnapshot({ candidate, target, specs, body, implementation, repository, number, targetSha,
+export async function replaySpecSnapshot({ candidate, target, specs, configurationPaths = [], body, implementation, repository, number, targetSha,
   toolRoot = resolve("node_modules/@fission-ai/openspec") }) {
   const root = await mkdtemp(join(tmpdir(), "delivery-spec-replay-"));
   try {
@@ -48,6 +51,11 @@ export async function replaySpecSnapshot({ candidate, target, specs, body, imple
       const bytes = await candidate.blob(path);
       await mkdir(join(root, path, ".."), { recursive: true });
       await writeFile(join(root, path), bytes);
+    }
+    for (const path of configurationPaths) {
+      const bytes = await target.blob(path);
+      if (bytes === null) await rm(join(root, path), { force: true });
+      else { await mkdir(join(root, path, ".."), { recursive: true }); await writeFile(join(root, path), bytes); }
     }
     const targetSpecs = new Map();
     for (const path of candidate.entries.keys()) if (path.startsWith("openspec/specs/")) targetSpecs.set(path, await candidate.blob(path));

@@ -46,7 +46,7 @@ export function decideRefresh(eligibility, comparison, targetSha, { strict = fal
   return { ...eligibility, disposition: "update", targetSha, behindBy };
 }
 
-/** Active rules are read from GitHub, not the desired defaults: existing strict consumers still need refresh. */
+/** Read live effective rules, not desired defaults, so strict drift is visible without CI churn. */
 export function strictRefreshRequired(rules) {
   if (!Array.isArray(rules) || rules.some(rule => typeof rule?.type !== "string")) throw new Error("active branch rules are malformed");
   const checks = rules.filter(rule => rule.type === "required_status_checks");
