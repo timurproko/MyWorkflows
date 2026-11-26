@@ -12,7 +12,7 @@ A repository keeps its code and specs; the workflow lives here and is updated he
 4. The bot finalizes the linked OpenSpec change in the PR branch (sync specs, archive, record the finalized head).
 5. The agent reports as soon as the work is pushed; CI and the review start together. Approved means the review
    approved that commit and CI is green on that same commit. The maintainer merges, or arms auto-merge.
-6. After a merge, the bot deletes the merged branch and refreshes ready PRs only for strict protection or conflicts.
+6. After a merge, the bot deletes the merged branch and preserves ready heads unless conflict/spec-state repair is necessary.
 
 Agents never mark a PR ready and never arm auto-merge. An agent merges one PR only on an explicit request
 for that PR, and only with green CI on its current head. Promotion remains automatic on completed outcomes;
@@ -25,12 +25,20 @@ The shared skill contains the complete loop.
 
 ## Ready pull-request refresh
 
-After a merge, the shared job reads active default-branch rulesets and checks ready same-repository PRs against
-the delivery target. A conflict-free PR that is merely behind is left untouched under non-strict protection,
-preserving its reviewed head and avoiding another full CI run. Refresh is attempted only when an active required-check
-rule is strict or GitHub reports a merge conflict. Unknown mergeability is deferred; unavailable/malformed rules
-never authorize a write. Conflicts that GitHub cannot merge require manual resolution. Updates still use the
-observed head SHA so a concurrent push cannot be overwritten. Drafts, closed PRs and forks are excluded.
+After a merge, the shared job checks ready same-repository PRs against the delivery target. Independent base
+advances preserve the exact head, acceptance metadata and existing checks: no update-branch, merge/rebase, provenance-only
+commit or CI dispatch. Strict live protection is reported as configuration drift, not permission to refresh every head.
+Unknown mergeability is deferred; unavailable/malformed evidence never authorizes a write. Real conflicts require manual
+resolution when GitHub cannot merge them. Any update remains bound to the observed head SHA. Drafts, closed PRs and forks are excluded.
+
+Linked OpenSpec deliveries use one semantic baseline classifier in the sweep, finalizer and Delivery check. The recorded
+`specBaseSha` is historical provenance, not required to equal today's base. Ancestry, exact-head/content digests and path
+scope remain checked. Only changes to affected canonical spec inputs, schema/configuration or the change's own paths
+invalidate finalization; unrelated capabilities do not. Where affected inputs changed, trusted pinned-tool replay can
+prove the same finalized output without rewriting metadata. Necessary re-finalization retains scoped commits and lease
+checks and correctly starts fresh CI. Corrupt/unknown history, tree/API failures and failed replay block rather than
+silently blessing the head. Ordinary code conflicts are detected without committing a base merge. Developer edits to a
+new head still receive normal re-finalization.
 Dependabot-authored PRs are also excluded: Dependabot owns rebasing its branches. This is an author policy,
 not a title filter; other bot-authored PRs, including reference-label reconciliation, remain eligible.
 Recognized update permission refusals (including workflow changes the App cannot write) are skipped with a warning
@@ -44,9 +52,11 @@ edits after merge.
 1. Install the delivery bot (GitHub App) on the repository. Store its App id as the Actions variable `DELIVERY_BOT_APP_ID` and its private key as the secret `DELIVERY_BOT_PRIVATE_KEY`; every repository uses these two names.
 2. Copy `templates/delivery-caller.yml` to `.github/workflows/delivery.yml`, unchanged. For advisory review-label
    exclusivity, also copy `templates/review-labels-caller.yml` to `.github/workflows/review-labels.yml`; never add label events to delivery or test callers.
-3. Name your CI gate `CI required`, then run `delivery protect --repo <owner/name>` to inspect protection.
-   Use `--apply` to install missing protection: the default branch requires `CI required` and
-   `delivery / Delivery check`, squash merges only, and linear history. No repository registration or file is needed.
+3. Name your CI gate `CI required` and run it on default-branch pushes as well as PRs. Inspect `delivery fast-merge --repo <owner/name>`
+   for effective rules/classic protection, queues, required checks and exact read-only strict-bit proposals. No apply mode exists
+   for this diagnostic. The default is non-strict checks, both `CI required` and `delivery / Delivery check`, squash and linear history.
+   Any live protection change needs explicit approval naming the repository and exact changes; see [safe alignment](docs/protection-migration.md).
+   `delivery protect --repo <owner/name>` inspects the broader desired policy; its apply flags can change more than strictness.
 4. Run `delivery instructions --apply` to write `AGENTS.md` (the shared template) and `CLAUDE.md` (`@AGENTS.md`).
    Move anything else agents were told into `docs/` and delete the old instruction files.
 5. Copy `templates/workflow-bootstrap.mjs` to `scripts/workflow-bootstrap.mjs` and run it from the package manager's
@@ -202,11 +212,33 @@ optional label exclusivity must also declare/authorize the separate review-label
 
 With several agents working in one repository, strict checks sent every open PR back through a base merge and
 full CI run after each merge. The shared builder now sets `strict_required_status_checks_policy: false`, including
-for repository overrides. Required checks still gate every merge; CI on the default branch catches the rare case
-of two changes that pass separately and break together. Ready-PR refresh consults live active rulesets, not merely
-the new desired default, so still-strict repositories retain automatic base refresh while non-strict clean heads stay untouched.
+for repository overrides. Required checks still gate every merge; CI on default-branch pushes detects integration failures where
+configured, but does not prevent two separately green changes breaking main together. Ready-PR refresh consults live active rulesets, not merely
+the desired default; still-strict repositories now report drift without rewriting clean heads. A maintainer must explicitly
+align their settings before GitHub permits a behind head to merge.
 This changes the tool's desired policy, not live rulesets: it takes effect in each repository when protection is
 next explicitly applied with consent. See [application and migration](docs/protection-migration.md).
+
+### Read-only policy and default-head health
+
+`delivery fast-merge --repo owner/name` reports effective/inherited rulesets, classic protection, required contexts/App pins,
+queues and unknown reads. Repeat `--repo` for a named list. Strict-bit proposals name the observed ruleset/ref and exact field;
+there is no mutation mode and `--apply` is rejected. No settings are automatically synchronized.
+
+`delivery base-health --repo owner/name` reports product test gates for the **exact current default head** using push runs,
+not older green commits, PR merge refs, advisory jobs or skipped gates. Its statuses are passing, failing, pending, missing
+and unknown; non-passing returns nonzero. Both diagnostics read the default-branch protection declaration or built-in defaults.
+The independent, non-required **Policy and default-branch health (advisory)** job publishes the same JSON in its summary and
+warnings on forwarded delivery events. It uses existing caller credentials without elevated grants: forbidden protection or
+Actions reads remain visibly unknown. In particular a caller token without Actions read may not resolve health; the local
+signed-in diagnostic is the fallback for a person/agent, not a write credential. No caller permission is changed automatically.
+
+Non-strict checks allow two individually green PRs to break main together, even on disjoint paths. Default-branch push CI is
+the integration fallback, not a pre-merge guarantee. A red main is not automatically a red unrelated PR, and summaries are
+not guaranteed person notifications. Agents report base health at handoff/merge preparation. The read-only audit found a1
+lacks per-merge develop validation (scheduled/manual checks are not equivalent); its strict-bit rollout remains blocked
+pending a separate a1 change. Private protection access remains unknown. See [the audit and rollout list](docs/plans/fast-merge-no-rerun.md).
+An overlapping-path rerun guard is not enabled: it has false positives, misses cross-file interactions, and adds avoidable CI.
 
 ### Optional repository override
 

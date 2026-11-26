@@ -122,6 +122,36 @@ jobs:
           DELIVERY_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: node scripts/delivery-check.mjs
 
+  diagnostics:
+    name: Policy and default-branch health (advisory)
+    # Read-only, independent and never a required check. Restricted caller tokens report unknown access.
+    if: >-
+      github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_run'
+      || (github.event_name == 'pull_request_target'
+      && github.event.action != 'labeled' && github.event.action != 'unlabeled'
+      && github.event.pull_request.base.ref == github.event.repository.default_branch
+      && (github.event.action != 'closed' || github.event.pull_request.merged == true))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted delivery tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: timurproko/MyWorkflows
+          ref: ${{ inputs.tools_ref }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Report protection drift and exact default-head product test health
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/report-delivery-diagnostics.mjs
+
   refresh:
     name: Refresh stale ready pull requests
     # Rationale: a merge made with GITHUB_TOKEN emits no pull-request event, so a caller may also

@@ -1,6 +1,14 @@
 # Preserve green ready heads after independent merges
 
-Status: proposal only; stop for maintainer approval. No workflow, protection, repository setting or consumer file is changed by this plan. Crew publishes the draft PR; implementation outcomes remain unchecked.
+Status: implementation approved in PR #41 for semantic classification, read-only drift proposals, base-health visibility, documentation and regression coverage. **Live protection/settings changes remain unapproved.** The original investigation/proposal below is retained as evidence; the approved application path is dry-run only, not a live writer.
+
+## Implemented scope and remaining rollout gaps
+
+- `scripts/spec-base-impact.mjs` is shared by the finalizer, Delivery check and merge sweep. Independent advances preserve head/body/provenance; affected specs can be replayed with the pinned tool to prove unchanged output. Unknown reads/history/replay block; necessary repair retains scoped commits and lease/target checks.
+- Strict live checks report drift instead of updating clean behind branches. `delivery fast-merge --repo owner/name` prints exact per-repository strict-bit proposals and effective/classic protection evidence. It has no apply mode; write flags are rejected. No protection, merge setting, permission, variable or private-repository file was changed.
+- `delivery base-health --repo owner/name` and an independent advisory delivery job report product push gates on the exact default head. Older/advisory/skipped evidence cannot report passing. Caller tokens without sufficient read permission report unknown; the signed-in local diagnostic can provide evidence. No guaranteed person notification or new merge gate is claimed.
+- All eight audited callers track main, so shared changes arrive after merge on the next event without consumer edits. Settings do not auto-align. The three strict-bit changes still need named-repository authorization; a1 also needs separate per-merge develop validation, and private protection access remains unresolved.
+- Focused fake-API and temporary-Git tests cover no-op preservation, necessary spec repair, replay, unknown evidence, races, read-only proposals and default-head health. Regression-test details remain below. No overlapping-path rerun policy was added.
 
 ## Finding
 

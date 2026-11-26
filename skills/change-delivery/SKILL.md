@@ -141,8 +141,10 @@ or caller migration is needed.
 
 1. **Build:** make the change, run only the tests for what you touched, and push. No full local test suite.
 2. **Report immediately after pushing:** CI and the review start together. Do not wait for CI or bot completion
-   to hand off. Include worktree path, branch, exact commit, change, PR, behavior, known gaps, targeted commands
-   and results, and one command the maintainer can run. Plan handoff still stops for approval.
+   to hand off. Read `delivery base-health --repo owner/name` once before the final push and include that exact default-head
+   snapshot (passing/failing/pending/missing/unknown and run links) in the report; do not poll. A green PR is not proof of green main.
+   Include worktree path, branch, exact commit, change, PR, behavior, known gaps, targeted commands and results,
+   and one command the maintainer can run. Plan handoff still stops for approval.
 3. **One combined fix round:** collect CI failures and review findings together, fix the blocking items in the
    same PR, run only the relevant tests and push once. Do not weaken tests or checks. Keep one concern per PR.
 4. **Approval:** approved means the review approved that commit and CI is green on that same commit. Pending
@@ -251,6 +253,19 @@ See `docs/delivery-labels.md` in MyWorkflows for the complete manifest/API, tran
 The maintainer merges, or arms auto-merge. An agent merges only when the maintainer explicitly asks, in the
 current conversation, to merge one identified PR. That request is one-shot: it is not remembered, and green CI
 or an earlier approval is not a request.
+
+Before merge preparation, read `delivery base-health --repo owner/name` once and report any failing, pending, missing or
+unknown default-head test evidence to the maintainer. This is advisory, not a new required check or permission to bypass
+protection. Two green PRs can break main together without strict checks; default-branch push CI is the fallback, not a
+pre-merge guarantee. Existing delivery summaries may report unknown if caller read permissions are insufficient.
+
+`delivery fast-merge --repo owner/name` reports effective/classic protection drift and exact strict-bit proposals, read-only.
+It has no apply mode. Never change settings without explicit consent naming each repository and exact change. A strict
+rule is a configuration blocker, not a reason to update a clean ready branch. Independent base advancement must preserve
+ready heads, finalized metadata and existing checks; only actual conflicts or invalidated spec state justify repair.
+Do not add overlap-driven reruns or merge the base just to refresh provenance. Unknown ancestry/spec evidence blocks/defer,
+never silently authorizes branch rewrites. Adopters tracking main receive shared logic on their next event; settings stay
+separately managed. Pinned adopters update the reusable workflow reference and matching tools_ref together.
 
 Immediately before merging, re-read the PR and require: open, not draft, into the default branch, mergeable,
 every required check successful on the current head, and that head finalized if it links a change. Then:
