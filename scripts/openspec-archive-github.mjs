@@ -5,6 +5,7 @@ import { assertManualAcceptanceMerge, requireAcceptance } from "./openspec-accep
 import { parseAssociationRepair } from "./openspec-association-repair.mjs";
 import { parseConditionalAcceptance, verifyConditionalAcceptance } from "./openspec-delivery-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
+import { classifySpecBase, replaySpecSnapshot } from "./spec-base-impact.mjs";
 
 export function createArchiveReader({ repository, token, fetchImpl = fetch, apiUrl = "https://api.github.com", deadline = Infinity }) {
   if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository)) throw archiveFailure("repository-identity");
@@ -74,7 +75,6 @@ export async function inspectVersion3DeliverySnapshot(reader, pull, implementati
   const manifestText = (await snapshot.blob(implementation.acceptanceManifest))?.toString();
   requireAcceptance(manifestText, "delivery-manifest-missing");
   const manifest = parseConditionalAcceptance(manifestText);
-  requireAcceptance(manifest.specBaseSha === pull.base?.sha, "delivery-target-stale");
   const contentPaths = archivePaths.filter(path => path !== implementation.acceptanceManifest);
   const archiveEntries = await snapshotBytes(snapshot, contentPaths);
   const evidenceEntries = archiveEntries.filter(([path]) => /(?:^|\/)(?:evidence\/|implementation-evidence\.md$)/.test(path));
@@ -104,6 +104,19 @@ export async function inspectVersion3DeliverySnapshot(reader, pull, implementati
   "association-repair-corrective");
   const retiredSpecPaths = [...retired].map(capability => `openspec/specs/${capability}/spec.md`);
   return { snapshot, manifest, archiveEntries, specEntries, retiredSpecPaths, evidenceEntries, tasksBytes, scenarios, associationRepair, ...verified };
+}
+
+/** Head integrity is verified first; this classifier then proves whether base advancement matters. */
+export async function inspectDeliveryBaseImpact(reader, pull, implementation, value) {
+  const cache = new Map([[pull.head.sha, value.snapshot]]);
+  const snapshot = sha => {
+    if (!cache.has(sha)) cache.set(sha, snapshotOpenSpec(reader, sha));
+    return cache.get(sha);
+  };
+  return await classifySpecBase({ baseline: value.manifest.specBaseSha, target: pull.base.sha, head: pull.head.sha,
+    change: implementation.change, archive: implementation.archive, ancestor: reader.ancestor, snapshot,
+    replay: options => replaySpecSnapshot({ ...options, body: pull.body, implementation, repository: reader.repository,
+      number: pull.number, targetSha: pull.base.sha }) });
 }
 
 async function verifyAssociationRepairSource(reader, correctivePull, record) {
@@ -142,8 +155,9 @@ export async function validateVersion3Candidate(reader, number) {
     && files.length > 0 && files.length === pull.changed_files, "delivery-candidate-identity");
   const target = await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`);
   requireAcceptance(target.object?.sha === pull.base.sha, "delivery-target-stale");
-  await reader.ancestor(pull.base.sha, pull.head.sha);
   const value = await inspectVersion3DeliverySnapshot(reader, pull, implementation, pull.head.sha);
+  const impact = await inspectDeliveryBaseImpact(reader, pull, implementation, value);
+  requireAcceptance(impact.disposition === "valid", "delivery-spec-base-invalidated");
   await verifyAssociationRepairSource(reader, pull, value.associationRepair);
   const changed = new Set(files.flatMap(file => [file.filename, ...(file.status === "renamed" ? [file.previous_filename] : [])]));
   requireAcceptance(value.archiveEntries.every(([path]) => changed.has(path)) && changed.has(implementation.acceptanceManifest),

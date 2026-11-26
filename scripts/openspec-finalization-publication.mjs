@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readdir, realpath, rm, rename, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -8,7 +8,9 @@ import {
   assertImplementationOnlyProgress, parseImplementationAcceptanceScenarios, parseImplementationProgress,
 } from "./openspec-acceptance-checklist.mjs";
 import { prepareSinglePrDelivery, replaceImplementationMetadata } from "./openspec-delivery-finalization.mjs";
-import { readCanonicalSpecs } from "./openspec-delivery-git.mjs";
+import { gitOpenSpecSnapshot, readCanonicalSpecs } from "./openspec-delivery-git.mjs";
+import { parseConditionalAcceptance } from "./openspec-delivery-policy.mjs";
+import { classifySpecBase, replaySpecSnapshot } from "./spec-base-impact.mjs";
 import { archiveFailure, archivePaths, assertArchiveDiff, parseImplementation, SHA } from "./openspec-archive-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
 import { promotePlainDraft } from "./plain-delivery.mjs";
@@ -135,8 +137,15 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
     if (await git(["rev-parse", `refs/remotes/origin/${targetBranch()}`]) !== target) throw archiveFailure("target-advanced");
     if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== pull.head.sha) throw archiveFailure("finalization-head-changed");
     await git(["checkout", "--quiet", "--detach", pull.head.sha]);
-    if ((await git(["merge-base", "--is-ancestor", target, pull.head.sha], { allowFailure: true })) === null) {
-      throw archiveFailure("delivery-target-stale");
+    const baseline = await git(["merge-base", target, pull.head.sha]);
+    const impact = await classifySpecBase({ baseline, target, head: pull.head.sha, change: implementation.change,
+      archive: implementation.archive, snapshot: sha => gitOpenSpecSnapshot({ cwd: checkout, sha, env, gitImpl }),
+      ancestor: async (base, tip) => {
+        if (await git(["merge-base", "--is-ancestor", base, tip], { allowFailure: true }) === null) throw archiveFailure("commit-ancestry");
+      } });
+    if (impact.disposition !== "valid") throw archiveFailure("delivery-spec-base-invalidated");
+    if (baseline !== target && await git(["merge-tree", "--write-tree", pull.head.sha, target], { allowFailure: true }) === null) {
+      throw archiveFailure("finalization-merge-conflict");
     }
     // Invariant: a draft whose exact head finalization already produced holds its archived form, not an active
     // change, so it is promoted on that tree; the ready reconciliation then re-validates it as usual.
@@ -145,9 +154,9 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
       const activePresent = (await readdir(join(checkout, `openspec/changes/${implementation.change}/`)).catch(() => null)) !== null;
       if (!archive || activePresent || archive !== implementation.archive) throw archiveFailure("finalization-redraft-form");
     } else {
-      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: target, env, gitImpl });
+      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: baseline, env, gitImpl });
       await prepareSinglePrDelivery({ root: checkout, change: implementation.change, repository: reader.repository, sourcePr: number,
-        body: pull.body ?? "", specBaseSha: target, date, targetSpecs, write: false, toolRoot });
+        body: pull.body ?? "", specBaseSha: baseline, date, targetSpecs, write: false, toolRoot });
     }
   } catch (error) {
     const blocked = draftBlock(error, true);
@@ -167,7 +176,7 @@ async function promoteCompletedDraft({ reader, publisher, pull, implementation, 
 
 /**
  * Promote one complete draft or reconcile one ready version-3 pull request to its finalized form: finalize an active
- * head, re-finalize a drifted one, or merge the target branch first when the head is behind.
+ * head, or re-finalize invalidated spec state. Independent target advancement never rewrites a ready head.
  */
 export async function reconcileFinalization({ reader, publisher, number, toolRoot, gitImpl = execute, remoteUrl = null,
   date = utcDate(), deadline = Infinity }) {
@@ -231,8 +240,31 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
     const capabilities = archive ? await archiveCapabilities(checkout, archive) : [];
     const scope = archivePaths(change, effectiveDate, capabilities);
 
-    if (behind) {
-      const mergeBase = await git(["merge-base", target, head]);
+    const mergeBase = await git(["merge-base", target, head]);
+    const manifest = archive ? parseConditionalAcceptance(await readFile(join(checkout, archive, "acceptance.md"), "utf8")) : null;
+    const baseline = manifest?.specBaseSha ?? mergeBase;
+    // Never repair a corrupt record on the same certified head. Developer fixes on a new head can be re-finalized.
+    if (archive && implementation.finalizedHead === head) {
+      await prepareSinglePrDelivery({ root: checkout, change, repository: reader.repository, sourcePr: number, body,
+        specBaseSha: baseline, knownGaps: manifest.knownGaps, write: false, toolRoot });
+    }
+    const snapshots = new Map();
+    const snapshot = sha => {
+      if (!snapshots.has(sha)) snapshots.set(sha, gitOpenSpecSnapshot({ cwd: checkout, sha, env, gitImpl }));
+      return snapshots.get(sha);
+    };
+    const impact = await classifySpecBase({ baseline, target, head, change, archive, snapshot,
+      ancestor: async (base, tip) => {
+        if (await git(["merge-base", "--is-ancestor", base, tip], { allowFailure: true }) === null) throw archiveFailure("commit-ancestry");
+      },
+      replay: options => replaySpecSnapshot({ ...options, body, implementation: { ...implementation, archive,
+        acceptanceManifest: `${archive}acceptance.md` }, repository: reader.repository, number, targetSha: target, toolRoot }) });
+    const needsMerge = behind && impact.disposition === "invalidated";
+    // A data-only merge probe catches real code conflicts without committing or updating a clean branch.
+    if (behind && !needsMerge && await git(["merge-tree", "--write-tree", head, target], { allowFailure: true }) === null) {
+      throw archiveFailure("finalization-merge-conflict");
+    }
+    if (needsMerge) {
       if (!SHA.test(mergeBase)) throw archiveFailure("finalization-merge-base");
       if (archive) {
         // Rationale: restoring the active form against the merge-base lets the target branch's spec bytes win the merge without conflict.
@@ -255,9 +287,25 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       commits.push({ kind: "merge", sha: await git(["rev-parse", "HEAD"]) });
     }
 
-    const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: target, env, gitImpl });
-    const result = await prepareSinglePrDelivery({ root: checkout, change, repository: reader.repository, sourcePr: number, body,
-      specBaseSha: target, date: effectiveDate, targetSpecs, write: true, toolRoot });
+    let specBaseSha = impact.disposition === "valid" ? baseline : target;
+    const preparation = { root: checkout, change, repository: reader.repository, sourcePr: number, body,
+      date: effectiveDate, knownGaps: manifest?.knownGaps ?? [], toolRoot };
+    let result;
+    if (archive && impact.disposition === "valid") {
+      try {
+        // A still-valid record keeps its historical provenance, even on a new code-only developer head.
+        result = await prepareSinglePrDelivery({ ...preparation, specBaseSha, write: false });
+      } catch (error) {
+        if (!error.archiveCode || error.archiveCode === "delivery-not-finalized") throw error;
+        // Actual re-finalization needs the complete baseline already integrated into this head.
+        // The historical tree may omit unrelated capabilities brought in by a developer's base merge.
+        specBaseSha = behind ? mergeBase : target;
+      }
+    }
+    if (!result) {
+      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: specBaseSha, env, gitImpl });
+      result = await prepareSinglePrDelivery({ ...preparation, specBaseSha, targetSpecs, write: true });
+    }
     const refinalized = result.refinalized || commits.some(commit => commit.kind === "restore");
     if (result.disposition !== "already-finalized") {
       await git(["add", "-A", "--", "openspec"]);
@@ -300,6 +348,8 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
 
     let pushedHead = head;
     if (commits.length) {
+      const latestTarget = (await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
+      if (latestTarget !== target) return { disposition: "retry", reason: "target-changed-before-push", head, pushedHead: head, commits, bodyUpdated: false };
       const pushed = await git(["push", "--quiet", `--force-with-lease=refs/heads/${branch}:${head}`, "origin", `HEAD:refs/heads/${branch}`], { allowFailure: true });
       if (pushed === null) return { disposition: "retry", reason: "head-changed-before-push", head, pushedHead: head, commits, bodyUpdated: false };
       pushedHead = commits.at(-1).sha;

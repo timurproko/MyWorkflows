@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseImplementation } from "../scripts/openspec-archive-policy.mjs";
 import { parseConditionalAcceptance } from "../scripts/openspec-delivery-policy.mjs";
+import { archiveReaderFromGet, validateVersion3Candidate } from "../scripts/openspec-archive-github.mjs";
+import { refreshReadyPullRequests } from "../scripts/ready-pull-request-refresh.mjs";
 import { classifyFinalizationCandidate, reconcileFinalization } from "../scripts/openspec-finalization-publication.mjs";
 import { reportResult } from "../scripts/publish-openspec-finalization.mjs";
 
@@ -89,7 +91,33 @@ async function fixture() {
   const remoteHead = () => git(root, ["--git-dir", remote, "rev-parse", "refs/heads/feature/example"]);
   const remoteFile = async (path: string, ref: string | undefined = "refs/heads/feature/example") => await git(root, ["--git-dir", remote, "show", `${ref}:${path}`]);
   const reconcile = (overrides: Record<string, unknown> = {}) => reconcileFinalization({ reader, publisher, number: 7, toolRoot, remoteUrl: remote, date: "2026-09-16", ...overrides });
-  return { root, remote, seed, state, mutations, reader, publisher, remoteHead, remoteFile, reconcile };
+  const apiReader = () => archiveReaderFromGet("owner/repo", async path => {
+    const base = (await reader.get(`${reader.prefix}/git/ref/heads/develop`)).object!.sha;
+    const head = await remoteHead();
+    const files = (await git(root, ["--git-dir", remote, "diff", "--name-status", "--no-renames", `${base}...${head}`])).split("\n").filter(Boolean)
+      .map(line => { const [status, filename] = line.split("\t"); return { filename, status: status === "D" ? "removed" : status === "A" ? "added" : "modified" }; });
+    if (path.endsWith("/pulls/7")) return { ...await reader.get(path), changed_files: files.length };
+    if (path.includes("/pulls/7/files?")) return files;
+    if (path.includes("/git/trees/")) {
+      const sha = path.split("/git/trees/")[1]!.split("?")[0]!;
+      const tree = (await git(root, ["--git-dir", remote, "ls-tree", "-r", sha])).split("\n").filter(Boolean).map(line => {
+        const match = /^(\d+) (\w+) ([a-f0-9]{40})\t(.+)$/.exec(line)!;
+        return { mode: match[1], type: match[2], sha: match[3], path: match[4] };
+      });
+      return { tree, truncated: false };
+    }
+    if (path.includes("/git/blobs/")) {
+      const bytes = (await execute("git", ["--git-dir", remote, "cat-file", "blob", path.split("/git/blobs/")[1]!], { encoding: "buffer" })).stdout;
+      return { encoding: "base64", content: bytes.toString("base64"), size: bytes.length };
+    }
+    if (path.includes("/compare/")) {
+      const [from, to] = path.split("/compare/")[1]!.split("...");
+      const merge = await git(root, ["--git-dir", remote, "merge-base", from!, to!]);
+      return { status: from === to ? "identical" : merge === from ? "ahead" : "diverged", merge_base_commit: { sha: merge } };
+    }
+    return await reader.get(path);
+  });
+  return { root, remote, seed, state, mutations, reader, publisher, remoteHead, remoteFile, reconcile, apiReader };
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))); });
 
@@ -138,7 +166,7 @@ describe("trusted finalization publication", () => {
     expect(f.mutations).toHaveLength(0);
   }, 120_000);
 
-  it("blocks a completed draft genuinely behind develop even when the PR base SHA is stale", async () => {
+  it("promotes a completed draft behind an independent develop advance without rewriting its head", async () => {
     const f = await fixture();
     f.state.draft = true;
     f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
@@ -147,8 +175,8 @@ describe("trusted finalization publication", () => {
     await commit(f.seed, "feat: advance target", { "src/other.txt": "other\n" });
     await git(f.seed, ["push", "--quiet", "origin", "develop"]);
 
-    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "blocked", reason: "draft-delivery-target-stale", commits: [] });
-    expect(f.state).toMatchObject({ draft: true, readyCalls: 0 });
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "promoted", commits: [] });
+    expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
     expect(await f.remoteHead()).toBe(before);
     expect(f.mutations).toHaveLength(0);
   }, 120_000);
@@ -312,7 +340,135 @@ describe("trusted finalization publication", () => {
     expect(await f.remoteFile("src/app.txt")).toBe("repaired");
   }, 90_000);
 
-  it("restores, merges develop, and re-finalizes a finalized head that fell behind", async () => {
+  it.each([[true, false], [false, false], [true, true]])(
+    "refinalizes developer heads that already include independent target specs (evidence changed=%s, target advanced again=%s)", async (evidenceChanged, advanceAgain) => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    const archive = "openspec/changes/archive/2026-09-16-example/";
+    const originalManifest = parseConditionalAcceptance(await f.remoteFile(`${archive}acceptance.md`));
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    const target = await commit(f.seed, "docs: independent capability", {
+      "openspec/specs/other/spec.md": spec(requirement("Other behavior", "retain independent behavior")),
+    });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    await git(f.seed, ["checkout", "--quiet", "feature/example"]);
+    await git(f.seed, ["pull", "--quiet", "origin", "feature/example"]);
+    await git(f.seed, ["-c", "user.name=Developer", "-c", "user.email=dev@example.test", "merge", "--quiet", "--no-edit", target]);
+    if (evidenceChanged) await commit(f.seed, "docs: renew validation evidence", {
+      [`${archive}implementation-evidence.md`]: "# Evidence\n\nRenewed focused validation passed after independent integration.\n",
+    });
+    await git(f.seed, ["push", "--quiet", "origin", "feature/example"]);
+    const developerHead = await f.remoteHead();
+    if (advanceAgain) {
+      await git(f.seed, ["checkout", "--quiet", "develop"]);
+      await commit(f.seed, "docs: another independent capability", {
+        "openspec/specs/later/spec.md": spec(requirement("Later behavior", "retain later independent behavior")),
+      });
+      await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    }
+    expect(developerHead).not.toBe(first.pushedHead);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).rejects.toThrow("delivery-head-stale");
+
+    const result = await f.reconcile();
+    expect(result).toMatchObject({ disposition: evidenceChanged ? "refinalized" : "body-updated", head: developerHead, bodyUpdated: true });
+    expect(result.commits.map(commit => commit.kind)).toEqual(evidenceChanged ? ["refinalize"] : []);
+    expect(await git(f.root, ["--git-dir", f.remote, "rev-parse", `${result.pushedHead}:openspec/specs/other/spec.md`]))
+      .toBe(await git(f.root, ["--git-dir", f.remote, "rev-parse", `${target}:openspec/specs/other/spec.md`]));
+    expect(finalizedHeadFromBody(f.state.body)).toBe(result.pushedHead);
+    const updatedManifest = parseConditionalAcceptance(await f.remoteFile(`${archive}acceptance.md`));
+    expect(updatedManifest.specBaseSha).toBe(evidenceChanged ? target : originalManifest.specBaseSha);
+    if (evidenceChanged) {
+      expect(updatedManifest.evidenceDigest).not.toBe(originalManifest.evidenceDigest);
+      const written = (await git(f.root, ["--git-dir", f.remote, "diff", "--name-only", developerHead, result.pushedHead!])).split("\n");
+      expect(written).toEqual([`${archive}acceptance.md`]);
+      expect(await f.remoteFile(`${archive}implementation-evidence.md`)).toContain("Renewed focused validation");
+    } else {
+      expect(result.pushedHead).toBe(developerHead);
+      expect(updatedManifest).toEqual(originalManifest);
+    }
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+    const mutations = f.mutations.length;
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [], bodyUpdated: false });
+    expect(await f.remoteHead()).toBe(result.pushedHead);
+    expect(f.mutations).toHaveLength(mutations);
+  }, 120_000);
+
+  it.each(["src/independent.txt", "openspec/specs/other/spec.md", "openspec/config.yaml"])("preserves exact finalized heads, metadata and gates after independent %s merges", async path => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    const originalBody = f.state.body;
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    await commit(f.seed, "feat: independent", { [path]: path === "openspec/config.yaml" ? "schema: spec-driven\n# independent comment\n" : "independent\n" });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [], bodyUpdated: false });
+    expect(await f.remoteHead()).toBe(first.pushedHead);
+    expect(f.state.body).toBe(originalBody);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+    let reconciles = 0;
+    const results = await refreshReadyPullRequests({ repository: "owner/repo", reconcileLinked: async () => { reconciles++; throw new Error("unexpected repair"); },
+      request: async url => ({ status: 200, body: url.includes("/pulls?state=open") ? [{ number: 7 }]
+        : url.includes("/rules/branches/") ? [] : url.includes("?per_page=1") ? { behind_by: 1 }
+        : { ...await f.apiReader().get(url), ...(url.endsWith("/pulls/7") ? { mergeable: true } : {}) } }) });
+    expect(results[0]).toMatchObject({ disposition: "skipped", headSha: first.pushedHead });
+    expect(reconciles).toBe(0);
+    expect(f.mutations).toHaveLength(1);
+  }, 120_000);
+
+  it("replays changed inputs without rewriting identical finalized output", async () => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    const canonical = await f.remoteFile("openspec/specs/example/spec.md");
+    const originalBody = f.state.body;
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    await commit(f.seed, "docs: independently deliver same spec", { "openspec/specs/example/spec.md": `${canonical}\n`,
+      "openspec/specs/other/spec.md": "independent\n" });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [] });
+    expect(await f.remoteHead()).toBe(first.pushedHead);
+    expect(f.state.body).toBe(originalBody);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+  }, 120_000);
+
+  it("defers a ready publication when the target moves before pushing", async () => {
+    const f = await fixture();
+    const head = await f.remoteHead();
+    let reads = 0;
+    const reader = { ...f.reader, async get(path: string) {
+      if (path.endsWith("/git/ref/heads/develop") && ++reads === 2) {
+        await git(f.seed, ["checkout", "--quiet", "develop"]);
+        await commit(f.seed, "feat: raced target", { "src/independent.txt": "new\n" });
+        await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+      }
+      return await f.reader.get(path);
+    } };
+    await expect(f.reconcile({ reader })).resolves.toMatchObject({ disposition: "retry", reason: "target-changed-before-push", pushedHead: head, bodyUpdated: false });
+    expect(await f.remoteHead()).toBe(head);
+    expect(f.mutations).toHaveLength(0);
+  }, 120_000);
+
+  it("finalizes a ready active head without merging an independent target",  async () => {
+    const f = await fixture();
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    await commit(f.seed, "feat: independent", { "openspec/specs/other/spec.md": "other\n" });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    const result = await f.reconcile();
+    expect(result.commits.map(commit => commit.kind)).toEqual(["finalize"]);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+  }, 120_000);
+
+  it("stops rather than blessing a malformed manifest on a new head", async () => {
+    const f = await fixture();
+    await f.reconcile();
+    await git(f.seed, ["pull", "--quiet", "origin", "feature/example"]);
+    await commit(f.seed, "docs: corrupt manifest", { "openspec/changes/archive/2026-09-16-example/acceptance.md": "malformed" });
+    await git(f.seed, ["push", "--quiet", "origin", "feature/example"]);
+    const head = await f.remoteHead();
+    await expect(f.reconcile()).rejects.toThrow();
+    expect(await f.remoteHead()).toBe(head);
+    expect(f.mutations).toHaveLength(1);
+  }, 120_000);
+
+  it("restores, merges develop, and re-finalizes a finalized head that fell behind",  async () => {
     const f = await fixture();
     await f.reconcile();
     await git(f.seed, ["checkout", "--quiet", "develop"]);
@@ -321,9 +477,16 @@ describe("trusted finalization publication", () => {
       "src/other.txt": "other\n",
     });
     await git(f.seed, ["push", "--quiet", "origin", "develop"]);
-    const result = await f.reconcile();
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).rejects.toThrow("delivery-spec-base-invalidated");
+    let repairs = 0;
+    const sweep = await refreshReadyPullRequests({ repository: "owner/repo", reconcileLinked: async () => { repairs++; return await f.reconcile(); },
+      request: async url => ({ status: 200, body: url.includes("/pulls?state=open") ? [{ number: 7 }]
+        : url.includes("/rules/branches/") ? [] : url.includes("?per_page=1") ? { behind_by: 1 }
+        : { ...await f.apiReader().get(url), ...(url.endsWith("/pulls/7") ? { mergeable: true } : {}) } }) });
+    expect(sweep[0]).toMatchObject({ disposition: "refinalized" });
+    expect(repairs).toBe(1);
+    const result = { disposition: sweep[0]!.disposition, commits: (await git(f.root, ["--git-dir", f.remote, "log", "-3", "--format=%H", "refs/heads/feature/example"])).split("\n").reverse().map(sha => ({ sha })) };
     expect(result.disposition).toBe("refinalized");
-    expect(result.commits.map(commit => commit.kind)).toEqual(["restore", "merge", "refinalize"]);
     const archive = "openspec/changes/archive/2026-09-16-example/";
     const synchronized = await f.remoteFile("openspec/specs/example/spec.md");
     expect(synchronized).toContain("preserve updated behavior");

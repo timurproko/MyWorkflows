@@ -75,7 +75,7 @@ describe("label-only delivery events", () => {
   it.each(["labeled", "unlabeled"])("skips every existing delivery job on %s for both PR event types", async action => {
     const workflow = await load(sharedPath);
     for (const eventName of ["pull_request", "pull_request_target"]) {
-      for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
+      for (const name of ["finalize", "check", "refresh", "branch-cleanup", "label-sync", "review-label-cleanup", "diagnostics"]) {
         expect(enabled(job(workflow, name), action, eventName), name).toBe(false);
       }
       expect(enabled(job(await load(labelsPath), "review-label-reconciliation"), action, eventName)).toBe(action === "labeled");
@@ -84,12 +84,12 @@ describe("label-only delivery events", () => {
 
   it.each(["opened", "synchronize", "reopened", "ready_for_review", "edited"])("retains readiness/check/sync on %s", async action => {
     const workflow = await load(sharedPath);
-    for (const name of ["finalize", "check", "label-sync"]) expect(enabled(job(workflow, name), action), name).toBe(true);
+    for (const name of ["finalize", "check", "label-sync", "diagnostics"]) expect(enabled(job(workflow, name), action), name).toBe(true);
   });
 
   it("retains closure cleanup, merged refresh, manual reconciliation and forwarded workflow completion", async () => {
     const workflow = await load(sharedPath);
-    for (const name of ["refresh", "branch-cleanup", "label-sync", "review-label-cleanup"]) {
+    for (const name of ["refresh", "branch-cleanup", "label-sync", "review-label-cleanup", "diagnostics"]) {
       expect(enabled(job(workflow, name), "closed", "pull_request_target", { event: {
         action: "closed", repository: { default_branch: "main" }, pull_request: { state: "closed", merged: true, base: { ref: "main" } },
       } }), name).toBe(true);
@@ -99,7 +99,24 @@ describe("label-only delivery events", () => {
     expect(enabled(job(workflow, "check"), "closed")).toBe(false);
   });
 
-  it("keeps delivery callers free of label actions so they cannot publish skipped required checks", async () => {
+  it("keeps policy/base-health diagnostics advisory, read-only and independent of merge gates", async () => {
+    const workflow = await load(sharedPath);
+    const section = job(workflow, "diagnostics");
+    expect(section).toContain("continue-on-error: true");
+    expect(section).toContain("contents: read");
+    expect(section).toContain("GITHUB_TOKEN: ${{ github.token }}");
+    expect(section).toContain("ref: ${{ inputs.tools_ref }}");
+    expect(section).not.toMatch(/app_private_key|permission-.*: write|actions: write|needs:/);
+    for (const name of ["finalize", "check", "refresh"]) expect(job(workflow, name)).not.toMatch(/needs:.*diagnostics/);
+    expect(enabled(section, "closed")).toBe(false);
+    expect(enabled(section, "", "workflow_dispatch")).toBe(true);
+    expect(enabled(section, "completed", "workflow_run")).toBe(true);
+    expect(await load(".github/protection.json")).not.toContain("default-branch health");
+    expect(job(workflow, "check")).toContain("npm ci --ignore-scripts --omit=dev");
+    expect(job(workflow, "refresh")).toContain("npm ci --ignore-scripts --omit=dev");
+  });
+
+  it("keeps delivery callers free of label actions so they cannot publish skipped required checks",  async () => {
     for (const path of ["templates/delivery-caller.yml", ".github/workflows/self-delivery.yml"]) {
       const workflow = await load(path);
       const types = workflow.match(/pull_request_target:\n    types: \[([^\]]+)\]/)?.[1].split(",").map(type => type.trim());

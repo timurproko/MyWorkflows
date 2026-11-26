@@ -27,6 +27,9 @@ const USAGE = `Usage: delivery <command>
   protect [--repo <owner/name>] [--apply]   Compare defaults or the repository's .github/protection.json;
                                             --apply installs missing protection. Changing existing rules
                                             also requires --allow-rule-changes
+  fast-merge --repo <owner/name>            Read-only drift report and exact strict-bit proposals; no apply mode
+                                            Repeat --repo to inspect a named list
+  base-health --repo <owner/name>           Product test evidence for the exact default head; read-only
   labels --repo <owner/name> [--apply]      Report the central base-label diff; --apply explicitly upserts it
                                             --prune-unused-defaults reports only unused, unmodified GitHub
                                             defaults; with --apply deletes them instead of syncing labels
@@ -100,6 +103,15 @@ try {
     const result = await finishWorktree({ target: positionals[0], force: Boolean(values.force) });
     console.log(formatFinish(result));
     if (!result.removed || result.failure) process.exitCode = 1;
+  } else if (command === "fast-merge" || command === "base-health") {
+    const { values } = parseArgs({ args, options: { repo: { type: "string", multiple: true } } });
+    if (!values.repo?.length) throw new Error("name at least one --repo owner/name; this command is read-only");
+    const { fastMergeReport, baseHealthReport } = await import("../scripts/delivery-diagnostics.mjs");
+    for (const repository of values.repo) {
+      const result = await (command === "fast-merge" ? fastMergeReport : baseHealthReport)({ repository });
+      console.log(JSON.stringify(result, null, 2));
+      if (result.status !== (command === "fast-merge" ? "aligned" : "passing")) process.exitCode = 1;
+    }
   } else if (command === "protect") {
     const { values } = parseArgs({ args, options: { repo: { type: "string" }, apply: { type: "boolean" }, "allow-rule-changes": { type: "boolean" } } });
     const { formatProtection, protectRepository } = await import("../scripts/repository-protection.mjs");

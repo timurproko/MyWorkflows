@@ -148,13 +148,14 @@ describe("protected reference publication", () => {
     expect(f.pulls).toHaveLength(1);
     expect(f.api.mock.calls.some(([method, route]) => method === "PATCH" && route === `${prefix}/git/refs/heads/chore%2Freference-labels-123`)).toBe(true);
   });
-  it.each([true, false])("publishes the next UI edit after policy-aware refresh with strict=%s", async strict => {
+  it.each([[true, false], [false, false], [true, true], [false, true]])(
+    "publishes the next UI edit after policy-aware refresh with strict=%s and conflict=%s", async (strict, conflict) => {
     const f = fake();
     await reconcileReference({ api: f.api, apply: true, now: () => 123 });
     const branch = f.pulls[0].head.ref, topic = f.refs[branch];
     const base = "d".repeat(40), merged = "e".repeat(40);
     f.refs.trunk = base; f.manifests[base] = manifest();
-    const pull = { ...f.pulls[0], state: "open", draft: false, mergeable: true, base: { ref: "trunk", repo: { full_name: repository } }, head: { ...f.pulls[0].head, sha: topic } };
+    const pull = { ...f.pulls[0], state: "open", draft: false, mergeable: !conflict, base: { ref: "trunk", repo: { full_name: repository } }, head: { ...f.pulls[0].head, sha: topic } };
     const request = vi.fn(async (route: string, options?: any) => {
       if (route.includes("/pulls?")) return { body: [pull] };
       if (route.endsWith("/pulls/1")) return { body: pull };
@@ -171,13 +172,20 @@ describe("protected reference publication", () => {
       throw new Error("unexpected branch-refresh request");
     });
     vi.stubEnv("DELIVERY_BASE_BRANCH", "trunk");
-    try { expect((await refreshReadyPullRequests({ repository, request }))[0].disposition).toBe(strict ? "updated" : "skipped"); }
-    finally { vi.unstubAllEnvs(); }
-    expect(request.mock.calls.some(([route]) => route.endsWith("/update-branch"))).toBe(strict);
-    expect(f.refs[branch]).toBe(strict ? merged : topic);
+    try {
+      const result = (await refreshReadyPullRequests({ repository, request }))[0];
+      expect(result.disposition).toBe(conflict ? "updated" : strict ? "blocked" : "skipped");
+      if (!conflict) {
+        expect(result.headSha).toBe(topic);
+        expect(result.reason).toContain(strict ? "configuration drift" : "merely behind");
+        expect(request.mock.calls.every(([, options]) => !options?.method || options.method === "GET")).toBe(true);
+      }
+    } finally { vi.unstubAllEnvs(); }
+    expect(request.mock.calls.some(([route]) => route.endsWith("/update-branch"))).toBe(conflict);
+    expect(f.refs[branch]).toBe(conflict ? merged : topic);
     const refresh = { sha: merged, parents: [{ sha: topic }, { sha: base }], commit: { message: "Merge branch 'trunk' into chore/reference-labels-123" } };
     const api = vi.fn(async (method, route, body?) => {
-      if (strict && route.includes("/pulls/1/commits?")) return [...await f.api(method, route, body), refresh];
+      if (conflict && route.includes("/pulls/1/commits?")) return [...await f.api(method, route, body), refresh];
       if (route === `${prefix}/compare/${base}...${base}`) return { status: "identical", merge_base_commit: { sha: base } };
       if (route === `${prefix}/compare/${base}...${merged}`) return { files: [{ filename: "labels/base.json" }] };
       return f.api(method, route, body);
