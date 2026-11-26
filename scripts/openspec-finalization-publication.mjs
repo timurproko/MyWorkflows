@@ -287,10 +287,25 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       commits.push({ kind: "merge", sha: await git(["rev-parse", "HEAD"]) });
     }
 
-    const specBaseSha = impact.disposition === "valid" ? baseline : target;
-    const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: specBaseSha, env, gitImpl });
-    const result = await prepareSinglePrDelivery({ root: checkout, change, repository: reader.repository, sourcePr: number, body,
-      specBaseSha, date: effectiveDate, targetSpecs, knownGaps: manifest?.knownGaps ?? [], write: true, toolRoot });
+    let specBaseSha = impact.disposition === "valid" ? baseline : target;
+    const preparation = { root: checkout, change, repository: reader.repository, sourcePr: number, body,
+      date: effectiveDate, knownGaps: manifest?.knownGaps ?? [], toolRoot };
+    let result;
+    if (archive && impact.disposition === "valid") {
+      try {
+        // A still-valid record keeps its historical provenance, even on a new code-only developer head.
+        result = await prepareSinglePrDelivery({ ...preparation, specBaseSha, write: false });
+      } catch (error) {
+        if (!error.archiveCode || error.archiveCode === "delivery-not-finalized") throw error;
+        // Actual re-finalization needs the complete baseline already integrated into this head.
+        // The historical tree may omit unrelated capabilities brought in by a developer's base merge.
+        specBaseSha = behind ? mergeBase : target;
+      }
+    }
+    if (!result) {
+      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: specBaseSha, env, gitImpl });
+      result = await prepareSinglePrDelivery({ ...preparation, specBaseSha, targetSpecs, write: true });
+    }
     const refinalized = result.refinalized || commits.some(commit => commit.kind === "restore");
     if (result.disposition !== "already-finalized") {
       await git(["add", "-A", "--", "openspec"]);

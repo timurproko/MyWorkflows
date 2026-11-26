@@ -340,6 +340,59 @@ describe("trusted finalization publication", () => {
     expect(await f.remoteFile("src/app.txt")).toBe("repaired");
   }, 90_000);
 
+  it.each([[true, false], [false, false], [true, true]])(
+    "refinalizes developer heads that already include independent target specs (evidence changed=%s, target advanced again=%s)", async (evidenceChanged, advanceAgain) => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    const archive = "openspec/changes/archive/2026-09-16-example/";
+    const originalManifest = parseConditionalAcceptance(await f.remoteFile(`${archive}acceptance.md`));
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    const target = await commit(f.seed, "docs: independent capability", {
+      "openspec/specs/other/spec.md": spec(requirement("Other behavior", "retain independent behavior")),
+    });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    await git(f.seed, ["checkout", "--quiet", "feature/example"]);
+    await git(f.seed, ["pull", "--quiet", "origin", "feature/example"]);
+    await git(f.seed, ["-c", "user.name=Developer", "-c", "user.email=dev@example.test", "merge", "--quiet", "--no-edit", target]);
+    if (evidenceChanged) await commit(f.seed, "docs: renew validation evidence", {
+      [`${archive}implementation-evidence.md`]: "# Evidence\n\nRenewed focused validation passed after independent integration.\n",
+    });
+    await git(f.seed, ["push", "--quiet", "origin", "feature/example"]);
+    const developerHead = await f.remoteHead();
+    if (advanceAgain) {
+      await git(f.seed, ["checkout", "--quiet", "develop"]);
+      await commit(f.seed, "docs: another independent capability", {
+        "openspec/specs/later/spec.md": spec(requirement("Later behavior", "retain later independent behavior")),
+      });
+      await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    }
+    expect(developerHead).not.toBe(first.pushedHead);
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).rejects.toThrow("delivery-head-stale");
+
+    const result = await f.reconcile();
+    expect(result).toMatchObject({ disposition: evidenceChanged ? "refinalized" : "body-updated", head: developerHead, bodyUpdated: true });
+    expect(result.commits.map(commit => commit.kind)).toEqual(evidenceChanged ? ["refinalize"] : []);
+    expect(await git(f.root, ["--git-dir", f.remote, "rev-parse", `${result.pushedHead}:openspec/specs/other/spec.md`]))
+      .toBe(await git(f.root, ["--git-dir", f.remote, "rev-parse", `${target}:openspec/specs/other/spec.md`]));
+    expect(finalizedHeadFromBody(f.state.body)).toBe(result.pushedHead);
+    const updatedManifest = parseConditionalAcceptance(await f.remoteFile(`${archive}acceptance.md`));
+    expect(updatedManifest.specBaseSha).toBe(evidenceChanged ? target : originalManifest.specBaseSha);
+    if (evidenceChanged) {
+      expect(updatedManifest.evidenceDigest).not.toBe(originalManifest.evidenceDigest);
+      const written = (await git(f.root, ["--git-dir", f.remote, "diff", "--name-only", developerHead, result.pushedHead!])).split("\n");
+      expect(written).toEqual([`${archive}acceptance.md`]);
+      expect(await f.remoteFile(`${archive}implementation-evidence.md`)).toContain("Renewed focused validation");
+    } else {
+      expect(result.pushedHead).toBe(developerHead);
+      expect(updatedManifest).toEqual(originalManifest);
+    }
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+    const mutations = f.mutations.length;
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [], bodyUpdated: false });
+    expect(await f.remoteHead()).toBe(result.pushedHead);
+    expect(f.mutations).toHaveLength(mutations);
+  }, 120_000);
+
   it.each(["src/independent.txt", "openspec/specs/other/spec.md", "openspec/config.yaml"])("preserves exact finalized heads, metadata and gates after independent %s merges", async path => {
     const f = await fixture();
     const first = await f.reconcile();
