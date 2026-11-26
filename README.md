@@ -212,8 +212,8 @@ optional label exclusivity must also declare/authorize the separate review-label
 
 With several agents working in one repository, strict checks sent every open PR back through a base merge and
 full CI run after each merge. The shared builder now sets `strict_required_status_checks_policy: false`, including
-for repository overrides. Required checks still gate every merge; CI on default-branch pushes detects integration failures where
-configured, but does not prevent two separately green changes breaking main together. Ready-PR refresh consults live active rulesets, not merely
+for repository overrides. Required checks still gate every merge, but two changes can pass separately and break together.
+Configured default-branch push CI detects integration failures after merge; it does not prevent them. Ready-PR refresh consults live active rulesets, not merely
 the desired default; still-strict repositories now report drift without rewriting clean heads. A maintainer must explicitly
 align their settings before GitHub permits a behind head to merge.
 This changes the tool's desired policy, not live rulesets: it takes effect in each repository when protection is

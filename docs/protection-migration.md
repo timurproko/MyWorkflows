@@ -4,8 +4,9 @@ There is no central repository inventory. The shared default-branch ruleset buil
 `strict_required_status_checks_policy: false`, for built-in defaults and repository overrides alike. Required
 checks (`CI required` and `delivery / Delivery check`, or a repository's declared equivalent) still gate every
 merge. With several agents working in one repository, the strict rule sent every open pull request back through
-a base merge and a full CI run after each merge. Non-strict checks avoid that requirement; configured default-branch
-push CI detects integration failures after merge, but cannot prevent two separately green changes breaking main.
+a base merge and a full CI run after each merge. Non-strict checks avoid that requirement, but two changes can
+pass separately and break together. Configured default-branch push CI detects integration failures after merge;
+it does not prevent them.
 
 The coordinator already changed crew, xrbuild and herdr-app's live strict flags to false and kept backups. This
 change does not apply anything live; the tool will no longer try to restore strict mode there. Other repositories
