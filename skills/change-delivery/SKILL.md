@@ -53,7 +53,8 @@ branch. Implementation approval is not merge permission.
   Commits and PR titles are `type(scope): subject`; the PR title becomes the squash commit.
 - Scratch files (PR bodies, logs, patches) go in the worktree's ignored `.artifacts/`, never the system temp
   folder, the home folder or another checkout.
-- Continue an existing task in its existing worktree, branch and PR. One task, one PR.
+- Continue an existing task in its existing worktree, branch and PR. One concern per pull request; unrelated
+  changes and non-blocking follow-ups belong in separate work.
 
 ## 2. Plan as a draft PR
 
@@ -112,8 +113,8 @@ then tick that outcome in the PR body (`[ ]` to `[x]`, nothing else) before star
 - A tick means the code and tests are written. CI, broad test runs and manual validation never delay it; a later
   defect is fixed in a new commit. Never save ticks for handoff, and never tick unfinished work.
 - Adding, removing, reordering or rewording an outcome is a scope change: get approval and update the plan first.
-- Use quick targeted checks as each outcome lands. Before handoff, build and run the project's full local test
-  suite once on the head you hand off; CI confirms it. List the build/test commands and results in the report.
+- Build: make the change, run only the tests for what you touched, and push. No full local test suite;
+  CI runs the integration suite. List the targeted commands and results in the report.
 
 ## 4. Finish
 
@@ -122,45 +123,39 @@ Before ticking the **last** outcome:
 1. Finish all tasks; state each known gap and what happens to it.
 2. Add `## Acceptance` before `## Automation`: one to ten plain bullets (not checkboxes) saying what now holds,
    specific to this change, each one line of 20 to 300 bytes with the same content rules as Implementation.
-3. Bring the branch up to date with the default branch and push.
+3. Push the final implementation head; do not merge the base merely to satisfy an up-to-date requirement.
 4. Check the final body: `delivery check-body --body-file .artifacts/pr-body.md --final`.
 
-Then tick the last outcome and hand off the pushed draft for review. Completed outcomes do not authorize
-promotion: every delivery repository waits for approval by default, without an opt-in variable. The reviewer
-checks out that exact head, builds and runs the project's full local test suite once, and writes the commands,
-results and what was checked in the review report. A too-early review is refused with a reason; crew wait does
-waiting for completed outcomes, matching pushed heads and green light draft checks.
+Then tick the last outcome and report as soon as the work is pushed. CI and the review start together; do not
+wait for green CI before reporting or starting review. The bot keeps its existing behavior: it verifies the
+completed draft snapshot and marks ready, then commits `docs(openspec): finalize <change-id>` and records the
+archive and finalized head in Automation. Agents never mark a pull request ready. Always `git pull` before
+pushing again; never revert a finalization commit, push fixes on top. A fully ticked draft that stays draft
+means the bot refused it: read the Delivery workflow result for the reason.
 
-On approval covering the current head, the review runner sets Approved immediately and dispatches the consumer's
-`delivery.yml` with `pr`, `approved_head=<full-reviewed-sha>` and `dry_run=false` on its default branch. Crew's
-transport is separate work. Only a trusted repository writer/person may assert approval; agents never self-approve
-or dispatch promotion on their own authority. The bot accepts that exact head or proven App-only scoped
-finalization/clean base-merge commits after it, merges the base if clean, and finalizes **on the draft**. It pushes
-`docs(openspec): finalize <change-id>`, records `reviewedHead` and `finalizedHead` in Automation, then marks ready.
-A fully ticked draft normally waits for approval; a refused dispatch explains its reason in the workflow result.
-Always `git pull` before pushing again; never revert a finalization commit, push fixes on top.
-
-A PR that links no change uses the same approval-bound promotion with the Automation section left out; there is
-nothing to archive. A person working alone needs no crew: inspect the pushed head and dispatch its SHA in the
-Actions UI, or mark ready by hand. Agents never mark ready. Existing copied callers need the `approved_head`
-input/forwarding edit; old completed drafts are not grandfathered and already-ready PRs remain ready. See
-`docs/delivery-approval.md` in MyWorkflows for exact inputs, response reasons, bot-only proof and caller migration.
-MyWorkflows itself dispatches `self-delivery.yml`, not its reusable `delivery.yml`.
+A PR that links no change follows the same flow with the Automation section left out: the bot marks it ready
+when every outcome is ticked and the body is valid, and there is nothing to finalize. No review-approval dispatch
+or caller migration is needed.
 
 ## 5. CI and handoff
 
-- Drafts normally run only light checks; workers and reviewers each build/test locally once on their handoff
-  head. The ready, finalized head gets the repository's tests plus the `Delivery check`; tooling repositories
-  may also test draft changes. Approved does not wait for CI; GitHub's required checks independently block merge.
-- Do not watch CI in the foreground. Read its current result, report it, and repair failures in the same PR
-  without weakening a test or a check.
-- Hand off the pushed implementation draft for review after local testing and successful light checks, then
-  hand off after approval/publication when final-head CI is green. Include worktree path, branch, commit, change,
-  PR, behavior, known gaps, local build/test commands/results and one command the maintainer can run. Plan
-  handoff still stops for approval. Say when nothing is runnable.
-- When CI fails after approval, fix on the ready PR, build/test once on the repaired head and push. Review only
-  the new commits (delta review), restoring Approved immediately when they are approved; do not wait for CI to
-  set that label and do not convert back to draft merely to avoid a necessary CI run.
+1. **Build:** make the change, run only the tests for what you touched, and push. No full local test suite.
+2. **Report immediately after pushing:** CI and the review start together. Do not wait for CI or bot completion
+   to hand off. Include worktree path, branch, exact commit, change, PR, behavior, known gaps, targeted commands
+   and results, and one command the maintainer can run. Plan handoff still stops for approval.
+3. **One combined fix round:** collect CI failures and review findings together, fix the blocking items in the
+   same PR, run only the relevant tests and push once. Do not weaken tests or checks. Keep one concern per PR.
+4. **Approval:** approved means the review approved that commit and CI is green on that same commit. Pending
+   CI or approval of an earlier commit is not Approved. Required checks independently block merge.
+
+Reviewers inspect the exact pushed commit, run only relevant tests and state what was checked. Mark every
+finding **BLOCKING** or **FOLLOW-UP**. Only blocking findings cause another round; follow-ups are recorded for
+separate work, not bundled into this PR. The second review covers only the fix (delta review), not the entire
+change again. After two rounds the person decides; do not start a third automated review/fix round.
+
+Do not watch CI in the foreground or delay a pushed report for it. Report current CI state honestly (including
+pending or failed) so CI and review can run together. Agents never mark ready, arm auto-merge or merge without
+the explicit permission described below.
 
 ### Final agent review labels
 
@@ -195,11 +190,12 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Use the runner's signed-in credential, not the delivery App private key, and ordinary PR label operations.
   At review start, add current `under-review` and clear both verdict keys' current/historical assignments
   before launching the reviewer, even on a draft or pending-CI PR. Resolve the implementation PR, not a Plan report.
-- Build means building or fixing, including after review or CI failure; Review means an active review.
-  On `APPROVE` that covers the current head, immediately clear current/historical review-in-progress and
-  opposite-verdict assignments and add current `review-approved`, without waiting for CI. GitHub checks show CI
-  separately; there is no intermediate approved/CI stage. On `CHANGES NEEDED`, do the same and add current
-  `review-changes-needed` (Build).
+- Build means building or fixing, including the combined CI/review fix round. Review is the review stage,
+  including waiting for same-commit CI after a review approves. On `APPROVE`, add current `review-approved`
+  only when the review approved that commit and CI is green on that same commit; until then keep Review.
+  When both hold, clear current/historical review-in-progress and opposite-verdict assignments. On
+  `CHANGES NEEDED` for blocking findings, clear competing roles and add current `review-changes-needed` (Build).
+  FOLLOW-UP findings alone do not trigger another round.
   Verdicts are mutually exclusive; preserve unrelated labels.
 - On failed launch/report, stop, finish, observed death or abandonment, clear current/historical in-progress
   assignments without inventing a verdict. Make retries idempotent and report permission/API failures.

@@ -12,10 +12,6 @@ on:
         description: Implementation PR number to reconcile
         type: string
         required: true
-      approved_head:
-        description: Full SHA approved by a reviewer or person; required to promote a draft
-        type: string
-        required: false
       dry_run:
         description: Report the candidate classification without pushing
         type: boolean
@@ -30,7 +26,6 @@ jobs:
     uses: ./.github/workflows/delivery.yml
     with:
       pr: ${{ inputs.pr }}
-      approved_head: ${{ inputs.approved_head }}
       dry_run: ${{ inputs.dry_run || false }}
     secrets:
       app_id: ${{ vars.DELIVERY_BOT_APP_ID }}

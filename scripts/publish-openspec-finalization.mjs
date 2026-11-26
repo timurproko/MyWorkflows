@@ -15,7 +15,7 @@ function summaryLine(number, result) {
   const detail = result.reason ? ` (${result.reason})` : "";
   const commits = result.commits?.length ? `; pushed ${result.commits.map(commit => `${commit.kind} ${commit.sha.slice(0, 8)}`).join(", ")}` : "";
   const body = result.bodyUpdated ? "; body fence updated" : "";
-  return `- PR #${number}: ${result.disposition}${detail}; approved ${result.approvedHead ?? "none"}; observed ${result.head ?? "unknown"}${commits}${body}${result.finalizedHead ? `; finalized ${result.finalizedHead}` : ""}${result.archive ? `; archive ${result.archive}` : ""}`;
+  return `- PR #${number}: ${result.disposition}${detail}${commits}${body}${result.archive ? `; archive ${result.archive}` : ""}`;
 }
 
 /** Print one result and return the process exit code; a `blocked` draft fails with an error annotation. */
@@ -23,18 +23,15 @@ export function reportResult(result, log = console.log) {
   log(JSON.stringify(result, null, 2));
   if (result.disposition !== "blocked") return 0;
   // Rationale: every item is checked, so the author expects promotion; a green run would hide the refusal.
-  log(`::error title=OpenSpec finalization::Publication refused: ${result.reason}`);
+  log(`::error title=OpenSpec finalization::PR stays draft: ${result.reason}`);
   return 1;
 }
 
 export async function main(args = process.argv.slice(2), environment = process.env) {
-  const { values } = parseArgs({ args, options: { pr: { type: "string" }, "dry-run": { type: "boolean" }, "approved-head": { type: "string" } } });
+  const { values } = parseArgs({ args, options: { pr: { type: "string" }, "dry-run": { type: "boolean" } } });
   if (!/^[1-9]\d*$/.test(values.pr ?? "")) throw archiveFailure("implementation-pr");
   const number = Number(values.pr);
   const dryRun = Boolean(values["dry-run"]);
-  const approvalRequested = environment.GITHUB_EVENT_NAME === "workflow_dispatch";
-  const approvedHead = values["approved-head"] ?? null;
-  if (approvedHead && !approvalRequested) throw archiveFailure("approval-dispatch-required");
   if (!dryRun && (environment.GITHUB_ACTIONS !== "true" || !TRUSTED_EVENTS.includes(environment.GITHUB_EVENT_NAME))) {
     throw archiveFailure("trusted-workflow-required");
   }
@@ -47,23 +44,21 @@ export async function main(args = process.argv.slice(2), environment = process.e
   let result;
   if (dryRun) {
     const pull = await reader.get(`${reader.prefix}/pulls/${number}`);
-    const classified = classifyFinalizationCandidate(pull, repository, { allowDraft: true });
+    const classified = classifyFinalizationCandidate(pull, repository);
     if (classified.skip === "unassociated") {
       const association = await inspectUnassociatedPull(reader, pull);
       if (association.blocked) throw archiveFailure(association.reason, association.changes.join(","));
     }
-    result = classified.skip ? { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null, approvedHead }
-      : { disposition: pull.draft && !approvedHead ? "waiting" : "would-reconcile", reason: pull.draft && !approvedHead
-        ? "awaiting-approval" : "audit-only-approval-not-verified", approvedHead, head: pull.head.sha, change: classified.implementation.change };
+    result = classified.skip ? { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null }
+      : { disposition: "would-reconcile", head: pull.head.sha, change: classified.implementation.change };
   } else {
     const publisher = await createArchivePublisher({ repository, appId: environment.DELIVERY_BOT_APP_ID,
       privateKey: environment.DELIVERY_BOT_PRIVATE_KEY, deadline });
     try {
-      result = await reconcileFinalization({ reader, publisher, number, deadline, approvedHead, approvalRequested,
+      result = await reconcileFinalization({ reader, publisher, number, deadline,
         toolRoot: resolve(root, "node_modules/@fission-ai/openspec") });
     } finally { await publisher.close().catch(() => { /* Security: token expiry remains the final bound. */ }); }
   }
-  result = { number, ...result };
   if (environment.GITHUB_STEP_SUMMARY) {
     await appendFile(environment.GITHUB_STEP_SUMMARY, `## OpenSpec finalization${dryRun ? " audit" : ""}\n${summaryLine(number, result)}\n`);
   }
@@ -75,7 +70,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const code = error.archiveCode ?? "internal-error";
     const detail = error.archiveDetail ? `: ${error.archiveDetail}` : "";
     console.error(`OpenSpec finalization blocked: ${code}${detail}`);
-    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## OpenSpec finalization\n- blocked: \`${code}${detail}\`; inspect the branch and body before retrying: publication may have partially completed\n`);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `## OpenSpec finalization\n- blocked: \`${code}${detail}\`; nothing was pushed\n`);
     process.exitCode = 1;
   });
 }

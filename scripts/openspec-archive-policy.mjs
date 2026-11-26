@@ -77,13 +77,12 @@ export function strictJson(text, limit = 16 * 1024) {
 export function parseImplementation(text) {
   const value = metadataBlock(text, "openspec-implementation");
   if (value === null) return null;
-  object(value, ["version", "change"], ["specificationPr", "archivePreparationTasks", "archive", "acceptanceManifest", "finalizedHead", "reviewedHead"]);
+  object(value, ["version", "change"], ["specificationPr", "archivePreparationTasks", "archive", "acceptanceManifest", "finalizedHead"]);
   requireValue([1, 2, 3].includes(value.version) && typeof value.change === "string" && CHANGE.test(value.change), "implementation-identity");
   if (value.version === 1) requireValue(Number.isSafeInteger(value.specificationPr) && value.specificationPr > 0, "specification-pr");
   else requireValue(!Object.hasOwn(value, "specificationPr"), "metadata-fields");
   if (value.version === 3) {
     requireValue(!Object.hasOwn(value, "archivePreparationTasks"), "metadata-fields");
-    requireValue(value.reviewedHead === undefined || typeof value.reviewedHead === "string" && SHA.test(value.reviewedHead), "delivery-reviewed-head");
     const finalized = Object.hasOwn(value, "archive") || Object.hasOwn(value, "acceptanceManifest") || Object.hasOwn(value, "finalizedHead");
     if (finalized) {
       requireValue(typeof value.archive === "string" && typeof value.acceptanceManifest === "string", "delivery-paths");
@@ -96,7 +95,7 @@ export function parseImplementation(text) {
     }
   } else {
     requireValue(!Object.hasOwn(value, "archive") && !Object.hasOwn(value, "acceptanceManifest")
-      && !Object.hasOwn(value, "finalizedHead") && !Object.hasOwn(value, "reviewedHead"), "metadata-fields");
+      && !Object.hasOwn(value, "finalizedHead"), "metadata-fields");
     if (value.archivePreparationTasks !== undefined) {
       object(value.archivePreparationTasks, [], Object.keys(ARCHIVE_TASKS));
       const ids = Object.values(value.archivePreparationTasks);

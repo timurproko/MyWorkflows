@@ -70,12 +70,6 @@ async function fixture() {
   const reader = { repository: "owner/repo", prefix: "/repos/owner/repo",
     async get(path: string) {
       if (path.endsWith("/git/ref/heads/develop")) return { object: { sha: await git(root, ["--git-dir", remote, "rev-parse", "refs/heads/develop"]) } };
-      if (path.includes("/commits/")) {
-        const sha = path.split("/").at(-1)!;
-        const emails = (await git(root, ["--git-dir", remote, "show", "-s", "--format=%ae%n%ce", sha])).split("\n");
-        const actor = (email: string) => email.includes("archive-app[bot]") ? "archive-app[bot]" : "developer";
-        return { sha, author: { login: actor(emails[0]!) }, committer: { login: actor(emails[1]!) } };
-      }
       if (path.endsWith("/pulls/7")) {
         state.bodyReads.push(state.body);
         return { number: 7, node_id: "PR_example", state: state.state, draft: state.draft, body: state.body,
@@ -89,20 +83,12 @@ async function fixture() {
     async mutate(path: string, method: string, value: { body: string }) { mutations.push({ path, method, body: value }); state.body = value.body; return { number: 7 }; },
     async ready(number: number, nodeId: string) {
       expect({ number, nodeId }).toEqual({ number: 7, nodeId: "PR_example" });
-      expect(state.draft).toBe(true);
-      const metadata = parseImplementation(state.body);
-      if (metadata) {
-        expect(metadata.finalizedHead).toBe(await git(root, ["--git-dir", remote, "rev-parse", "refs/heads/feature/example"]));
-        expect(metadata.reviewedHead).toMatch(/^[a-f0-9]{40}$/);
-        expect(await git(root, ["--git-dir", remote, "show", `${metadata.finalizedHead}:${metadata.archive}acceptance.md`])).toContain("example");
-      }
       state.readyCalls += 1;
       state.draft = false;
     } };
   const remoteHead = () => git(root, ["--git-dir", remote, "rev-parse", "refs/heads/feature/example"]);
   const remoteFile = async (path: string, ref: string | undefined = "refs/heads/feature/example") => await git(root, ["--git-dir", remote, "show", `${ref}:${path}`]);
-  const reconcile = async (overrides: Record<string, unknown> = {}) => reconcileFinalization({ reader, publisher, number: 7, toolRoot,
-    remoteUrl: remote, date: "2026-09-16", approvedHead: overrides.approvalRequested ? await remoteHead() : null, ...overrides });
+  const reconcile = (overrides: Record<string, unknown> = {}) => reconcileFinalization({ reader, publisher, number: 7, toolRoot, remoteUrl: remote, date: "2026-09-16", ...overrides });
   return { root, remote, seed, state, mutations, reader, publisher, remoteHead, remoteFile, reconcile };
 }
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }))); });
@@ -111,7 +97,7 @@ describe("trusted finalization publication", () => {
   it("fails the run with an annotation only for a blocked draft", () => {
     const lines: string[] = [];
     expect(reportResult({ disposition: "blocked", reason: "draft-acceptance-checklist-item", head: null, commits: [] }, line => lines.push(line))).toBe(1);
-    expect(lines.at(-1)).toBe("::error title=OpenSpec finalization::Publication refused: draft-acceptance-checklist-item");
+    expect(lines.at(-1)).toBe("::error title=OpenSpec finalization::PR stays draft: draft-acceptance-checklist-item");
     for (const disposition of ["skipped", "retry", "promoted"] as const) {
       const quiet: string[] = [];
       expect(reportResult({ disposition, reason: "draft-implementation-progress-incomplete", head: null, commits: [] }, line => quiet.push(line))).toBe(0);
@@ -119,21 +105,17 @@ describe("trusted finalization publication", () => {
     }
   });
 
-  it("waits by default, then finalizes and records approval on the draft before making it ready", async () => {
+  it("promotes one exact complete draft, then finalizes only on the ready event", async () => {
     const f = await fixture();
     f.state.draft = true;
     const before = await f.remoteHead();
-    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "waiting", reason: "awaiting-approval", head: before });
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "promoted", head: before, promoted: true });
+    expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
     expect(await f.remoteHead()).toBe(before);
     expect(f.mutations).toHaveLength(0);
-    expect(f.state.readyCalls).toBe(0);
-    await expect(f.reconcile({ approvalRequested: true, approvedHead: null })).resolves.toMatchObject({ disposition: "blocked", reason: "approval-head-required" });
-    const result = await f.reconcile({ approvalRequested: true });
-    expect(result).toMatchObject({ disposition: "promoted", head: before, reviewedHead: before, promoted: true });
-    expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
+
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "finalized" });
     expect(await f.remoteHead()).not.toBe(before);
-    expect(parseImplementation(f.state.body)).toMatchObject({ reviewedHead: before, finalizedHead: result.pushedHead });
-    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized" });
     expect(f.state.readyCalls).toBe(1);
   }, 120_000);
 
@@ -150,13 +132,13 @@ describe("trusted finalization publication", () => {
     const before = await f.remoteHead();
     expect(f.state.baseSha).not.toBe(target);
 
-    await expect(f.reconcile({ approvalRequested: true })).resolves.toMatchObject({ disposition: "promoted", head: before });
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "promoted", head: before, commits: [] });
     expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
-    expect(await f.remoteHead()).not.toBe(before);
-    expect(f.mutations).toHaveLength(1);
+    expect(await f.remoteHead()).toBe(before);
+    expect(f.mutations).toHaveLength(0);
   }, 120_000);
 
-  it("merges the base and finalizes an approved draft that is behind, despite stale PR metadata", async () => {
+  it("blocks a completed draft genuinely behind develop even when the PR base SHA is stale", async () => {
     const f = await fixture();
     f.state.draft = true;
     f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
@@ -165,12 +147,10 @@ describe("trusted finalization publication", () => {
     await commit(f.seed, "feat: advance target", { "src/other.txt": "other\n" });
     await git(f.seed, ["push", "--quiet", "origin", "develop"]);
 
-    const result = await f.reconcile({ approvalRequested: true });
-    expect(result.disposition).toBe("promoted");
-    expect(result.commits!.map(commit => commit.kind)).toEqual(["merge", "finalize"]);
-    expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
-    expect(await f.remoteHead()).not.toBe(before);
-    expect(f.mutations).toHaveLength(1);
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "blocked", reason: "draft-delivery-target-stale", commits: [] });
+    expect(f.state).toMatchObject({ draft: true, readyCalls: 0 });
+    expect(await f.remoteHead()).toBe(before);
+    expect(f.mutations).toHaveLength(0);
   }, 120_000);
 
   it("refuses promotion when develop moves after inspection while PR metadata stays unchanged", async () => {
@@ -187,7 +167,7 @@ describe("trusted finalization publication", () => {
       return await f.reader.get(path);
     } };
 
-    await expect(f.reconcile({ reader, approvalRequested: true })).resolves.toMatchObject({ disposition: "retry", reason: "draft-target-changed" });
+    await expect(f.reconcile({ reader })).resolves.toMatchObject({ disposition: "retry", reason: "draft-target-changed", commits: [] });
     expect(f.state).toMatchObject({ draft: true, readyCalls: 0 });
     expect(await f.remoteHead()).toBe(before);
     expect(f.mutations).toHaveLength(0);
@@ -199,10 +179,10 @@ describe("trusted finalization publication", () => {
     expect(finalized.disposition).toBe("finalized");
     f.state.draft = true;
     const writes = f.mutations.length;
-    await expect(f.reconcile({ approvalRequested: true })).resolves.toMatchObject({ disposition: "promoted", head: finalized.pushedHead, promoted: true });
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "promoted", head: finalized.pushedHead, promoted: true });
     expect(f.state).toMatchObject({ draft: false, readyCalls: 1 });
     expect(await f.remoteHead()).toBe(finalized.pushedHead);
-    expect(f.mutations).toHaveLength(writes + 1);
+    expect(f.mutations).toHaveLength(writes);
     await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [] });
 
     // Invariant: a fence that claims the head is finalized while the active change is back is not promoted unchecked.
@@ -212,7 +192,7 @@ describe("trusted finalization publication", () => {
     const reopened = await f.remoteHead();
     f.state.body = f.state.body.replace(`"finalizedHead": "${finalized.pushedHead}"`, `"finalizedHead": "${reopened}"`);
     f.state.draft = true;
-    await expect(f.reconcile({ approvalRequested: true })).rejects.toThrow("finalization-archive-ambiguous");
+    await expect(f.reconcile()).resolves.toMatchObject({ disposition: "blocked", reason: "draft-finalization-redraft-form" });
     expect(f.state.readyCalls).toBe(1);
   }, 180_000);
 
@@ -260,7 +240,7 @@ describe("trusted finalization publication", () => {
     tasks.state.draft = true;
     await commit(tasks.seed, "chore: reopen task", { "openspec/changes/example/tasks.md": "## 1. Work\n\n- [ ] 1.1 Implement and verify example behavior.\n" });
     await git(tasks.seed, ["push", "--quiet", "origin", "feature/example"]);
-    await expect(tasks.reconcile({ approvalRequested: true })).rejects.toThrow("tasks-incomplete");
+    await expect(tasks.reconcile()).resolves.toMatchObject({ disposition: "blocked", reason: expect.stringMatching(/^draft-/) });
     expect(tasks.state).toMatchObject({ draft: true, readyCalls: 0 });
 
     const raced = await fixture();
@@ -269,101 +249,10 @@ describe("trusted finalization publication", () => {
       if (path.endsWith("/pulls/7") && raced.state.bodyReads.length === 1) raced.state.body = `${raced.state.body}\n`;
       return await raced.reader.get(path);
     } };
-    await expect(raced.reconcile({ reader, approvalRequested: true })).resolves.toMatchObject({
-      disposition: "retry", reason: "draft-changed-before-publication",
+    await expect(raced.reconcile({ reader })).resolves.toMatchObject({
+      disposition: "retry", reason: "draft-changed-before-ready",
     });
     expect(raced.state).toMatchObject({ draft: true, readyCalls: 0 });
-  }, 120_000);
-
-  it("promotes plain drafts only on approval, merges the base, and never invents Automation", async () => {
-    const f = await fixture();
-    f.state.draft = true;
-    f.state.body = f.state.body.split("## Automation")[0]!;
-    const inspectUnassociated = async () => ({ blocked: false });
-    const approvedHead = await f.remoteHead();
-    await expect(f.reconcile({ inspectUnassociated })).resolves.toMatchObject({ disposition: "waiting", reason: "awaiting-approval" });
-    await git(f.seed, ["checkout", "--quiet", "develop"]);
-    await commit(f.seed, "feat: base advance", { "src/other.txt": "other\n" });
-    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
-    const result = await f.reconcile({ inspectUnassociated, approvalRequested: true, approvedHead });
-    expect(result.disposition).toBe("promoted");
-    expect(result.commits!.map(commit => commit.kind)).toEqual(["merge"]);
-    expect(f.state.body).not.toContain("Automation");
-    expect(f.mutations).toHaveLength(0);
-    expect(await f.remoteFile("src/other.txt")).toBe("other");
-  }, 120_000);
-
-  it("refuses an uncovered dispatch head without branch, body or readiness writes", async () => {
-    const f = await fixture();
-    f.state.draft = true;
-    const before = await f.remoteHead();
-    await expect(f.reconcile({ approvalRequested: true, approvedHead: "f".repeat(40) })).resolves.toMatchObject({
-      disposition: "blocked", reason: "approval-head-mismatch", head: before,
-    });
-    expect(await f.remoteHead()).toBe(before);
-    expect(f.mutations).toHaveLength(0);
-    expect(f.state.readyCalls).toBe(0);
-  }, 60_000);
-
-  it.each(["head", "body", "base"])("never promotes if %s changes after metadata publication", async boundary => {
-    const f = await fixture();
-    f.state.draft = true;
-    f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
-    const publisher = { ...f.publisher, mutate: async (...args: Parameters<typeof f.publisher.mutate>) => {
-      const result = await f.publisher.mutate(...args);
-      if (boundary === "body") f.state.body += "\n";
-      else {
-        const branch = boundary === "head" ? "feature/example" : "develop";
-        await git(f.seed, ["checkout", "--quiet", branch]);
-        await git(f.seed, ["pull", "--quiet", "origin", branch]);
-        await commit(f.seed, "fix: concurrent writer", { "src/extra.txt": "delta\n" });
-        await git(f.seed, ["push", "--quiet", "origin", branch]);
-      }
-      return result;
-    } };
-    const result = await f.reconcile({ approvalRequested: true, publisher });
-    expect(result).toMatchObject({ disposition: "retry", reason: boundary === "base" ? "draft-target-changed" : "draft-changed-before-ready", bodyUpdated: true });
-    expect(f.state.readyCalls).toBe(0);
-    expect(f.state.draft).toBe(true);
-  }, 90_000);
-
-  it("accepts bot-only finalization on retry after readiness failure, but refuses a new human commit", async () => {
-    const f = await fixture();
-    f.state.draft = true;
-    const approvedHead = await f.remoteHead();
-    await git(f.seed, ["checkout", "--quiet", "develop"]);
-    await commit(f.seed, "feat: human base change", { "src/base.txt": "base delta\n" });
-    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
-    await git(f.seed, ["checkout", "--quiet", "feature/example"]);
-    const publisher = { ...f.publisher, ready: async () => { throw new Error("ready API failed"); } };
-    await expect(f.reconcile({ publisher, approvedHead, approvalRequested: true })).rejects.toThrow("ready API failed");
-    expect(f.state.draft).toBe(true);
-    const finalized = await f.remoteHead();
-    expect(finalized).not.toBe(approvedHead);
-    const repeated = await f.reconcile({ approvalRequested: true, approvedHead });
-    expect(repeated).toMatchObject({ disposition: "promoted", pushedHead: finalized, commits: [] });
-    expect(f.mutations).toHaveLength(1);
-
-    f.state.draft = true;
-    await git(f.seed, ["pull", "--quiet", "origin", "feature/example"]);
-    await commit(f.seed, "fix: human delta", { "src/app.txt": "delta\n" });
-    await git(f.seed, ["push", "--quiet", "origin", "feature/example"]);
-    await expect(f.reconcile({ approvalRequested: true, approvedHead })).resolves.toMatchObject({ disposition: "blocked", reason: "approval-head-mismatch" });
-    expect(f.state.readyCalls).toBe(1);
-    expect(f.mutations).toHaveLength(1);
-  }, 120_000);
-
-  it("retries after body publication failure without duplicating finalization or losing the reviewed head", async () => {
-    const f = await fixture();
-    f.state.draft = true;
-    const approvedHead = await f.remoteHead();
-    const publisher = { ...f.publisher, mutate: async () => { throw new Error("body API failed"); } };
-    await expect(f.reconcile({ publisher, approvedHead, approvalRequested: true })).rejects.toThrow("body API failed");
-    const finalized = await f.remoteHead();
-    expect(f.state.readyCalls).toBe(0);
-    const result = await f.reconcile({ approvedHead, approvalRequested: true });
-    expect(result).toMatchObject({ disposition: "promoted", commits: [], pushedHead: finalized });
-    expect(parseImplementation(f.state.body)).toMatchObject({ reviewedHead: approvedHead, finalizedHead: finalized });
   }, 120_000);
 
   it("finalizes an active ready head, updates the body afterwards, and is a no-op on its own output", async () => {
@@ -480,7 +369,7 @@ describe("trusted finalization publication", () => {
       return await edited.reader.get(path);
     } };
     const raceResult = await reconcileFinalization({ reader: readerWithEdit, publisher: edited.publisher, number: 7, toolRoot, remoteUrl: edited.remote, date: "2026-09-16" });
-    expect(raceResult).toMatchObject({ disposition: "retry", reason: "draft-changed-before-publication", bodyUpdated: false });
+    expect(raceResult).toMatchObject({ disposition: "retry", reason: "body-changed-before-update", bodyUpdated: false });
     expect(raceResult.commits.map(commit => commit.kind)).toEqual(["finalize"]);
     expect(edited.mutations).toHaveLength(0);
 
@@ -495,7 +384,7 @@ describe("trusted finalization publication", () => {
     } };
     const headRace = await reconcileFinalization({ reader: readerWithHeadAdvance, publisher: advanced.publisher, number: 7,
       toolRoot, remoteUrl: advanced.remote, date: "2026-09-16" });
-    expect(headRace).toMatchObject({ disposition: "retry", reason: "draft-changed-before-publication", bodyUpdated: false });
+    expect(headRace).toMatchObject({ disposition: "retry", reason: "head-changed-before-body-update", bodyUpdated: false });
     expect(advanced.mutations).toHaveLength(0);
   }, 120_000);
 

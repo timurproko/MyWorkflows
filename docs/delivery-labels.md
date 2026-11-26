@@ -47,7 +47,7 @@ The MyWorkflows-only `Reference labels` workflow uses trusted default-branch too
 
 Names must be nonempty, trimmed, control-character-free and at most 50 Unicode code points; colour must be six hexadecimal digits, description at most 100 code points. Duplicate source identities and case/Unicode-normalization collisions across different roles' current names/alias histories are rejected. Explicit same-role aliases support deliberate case/Unicode-only renames; an unlisted case/normalization collision is never silently adopted. Removing the robot prefix is allowed. Invalid UI edits are reported, not propagated blindly; the UI itself is not rolled back.
 
-Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. After inspecting that bot PR, a person dispatches its approved head (or marks ready manually); the delivery bot can promote it and run required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
+Valid changes create/update a dedicated `chore/reference-labels-*` topic branch and **draft bot pull request** with the delivery body's Proposal, completed data-update Implementation and Acceptance sections. No OpenSpec Automation section applies here. The existing delivery bot promotes its completed draft and runs required checks; **the person merges it**. There is no direct main push, bypass, automatic readiness by the publisher or auto-merge. Publication uses the existing repository-scoped delivery App's Contents write and Pull requests write capabilities; no consumer writes or extra Issues grant is needed. Default-branch and topic-head changes during preflight are rejected; non-force updates reject concurrent sibling commits. A branch with manual/unrelated edits is not overwritten. Normal delivery update-branch merge commits remain eligible when their second parent is an ancestor of the trusted default head, their content differs from that trusted base only in the manifest, and the merge leaves the topic's manifest unchanged. A publication failure after branch creation may leave an unmerged topic branch for inspection, never a default-branch change.
 
 A metadata edit reverted to the accepted manifest before merge retires its generated PR: after the usual source/head preflight, the publisher comments that the reference now matches main and closes the PR instead of writing a pointless revert commit. Read-only mode reports `would-retire` without commenting/closing. Alias-history changes remain meaningful and are not discarded just because the display name reverted.
 
@@ -215,18 +215,24 @@ lease, timer, crash-expiry guarantee or cross-controller lock. GitHub offers no 
 endpoint; the read/DELETE race remains: independent writers or closure/reopen between the last read and DELETE remain a non-atomic race. The
 closed-event job still owns closures; no stale verdict or review label is automatically restored after reopening.
 
-## Approval and local testing
+## Review loop and stage meanings
 
-Build is the initial/fix stage, Review is active review, and Approved is set as soon as review covers the current
-head, even when CI is pending. There is no fourth state or Review/CI chip. Workers and reviewers each build and
-run the project's full local suite once on the head they hand off, listing commands and results. A premature
-review is refused with a reason; crew wait does waiting. CI failure after approval returns work to Build on the
-ready PR and requires delta review of new commits, not re-review of the entire approved change.
+There are exactly three managed labels: Build, Review and Approved. Build means building/fixing, including one
+combined fix round for CI failures and blocking review findings. Review is the review stage, including waiting
+for CI after review approval. Approved means the review approved that commit and CI is green on that same commit;
+review approval alone or green checks on an earlier head are not enough. Closed Approved remains a historical
+record, not approval of new commits.
 
-Promotion waits for approval by default in every delivery repository; labels themselves do not authorize it.
-The precise [dispatch contract, solo-person path and caller/open-draft migration](delivery-approval.md) are the
-interface for crew's later integration. Agents never mark ready. Only the bot after approved-head publication,
-or the person using the manual-ready path, promotes the PR.
+Keep one concern per pull request. Make the change, run only the tests for what you touched, push and report
+immediately: CI and the review start together. No full local test suite is required of workers or reviewers.
+Reviewers identify the exact commit, state what they checked, and mark every finding BLOCKING or FOLLOW-UP.
+Only blocking findings cause another round; follow-ups are recorded as separate work. Combine CI failures and
+blocking findings into one fix round. The second review covers only the fix (delta review); after two rounds
+the person decides, rather than launching a third automated round.
+
+The bot retains its existing promotion on completed draft outcomes, followed by linked-change finalization.
+Labels do not authorize promotion. No approval dispatch or caller migration is needed. Agents never mark ready.
+The shared change-delivery skill is the source of these delivery rules; crew's orchestration is separate work.
 
 ## Runner manifest API and crew contract
 
@@ -240,13 +246,13 @@ Crew's separately implemented transport makes exactly one contents API read with
 
 - Resolve the implementation PR from the implementation report/current branch, not a `Plan:` report. Respect repository opt-out; use the runner's signed-in credential, not the delivery App key.
 - At review start, add current `under-review` and remove both verdict keys' current/historical assignments **before launching the reviewer**, even for drafts or pending CI.
-- Build means building/fixing, including after review or CI failure; Review means an active review. On `APPROVE` that covers the current head, immediately clear current/historical review-in-progress and opposite-verdict names, then add current `review-approved`, without waiting for CI. GitHub checks show CI separately; there is no intermediate approved/CI stage or chip. On `CHANGES NEEDED`, do the same and add current `review-changes-needed` (Build). Verdicts are mutually exclusive.
+- On `APPROVE`, add current `review-approved` only when the review approved that commit and CI is green on that same commit; keep Review while CI is pending. When both hold, clear current/historical review-in-progress and opposite-verdict names. On `CHANGES NEEDED` for blocking findings, clear competing roles and add current `review-changes-needed` (Build). FOLLOW-UP findings alone do not trigger another round. Verdicts are mutually exclusive.
 - Failed launch/report, stop, finish, observed death or abandonment clears current/historical in-progress names without inventing a verdict. Complete old cleanup before replacement; retain one owner per PR or wait for that owner's last local reviewer to finish. Plain labels cannot coordinate overlapping independent controllers.
 - Use ordinary `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["<resolved current name>"]}` and `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/{URL-encoded-resolved-name}`. Do not replace the whole label set or delete repository definitions. Repeated add is harmless; confirm access and absence before treating a remove-label 404 as success. Warn on permissions/API failures and use existing recovery.
 
 Closed/merged cleanup removes Build and Review current/historical assignments; Approved stays as the record, including its aliases. A reopened PR keeps that record until the next review sets one; removed assignments are not restored. Unrelated labels remain untouched. This policy supersedes the earlier all-verdicts clear-on-close contract; retained Approved is historical evidence, not approval of later commits.
 
-All three labels are **advisory**, never required checks, readiness conditions or merge gates; absence is not approval. A retained verdict is not a promise that later commits were reviewed. No lease, heartbeat, state comment, timer, supervisor or cross-controller lock is added. Approval dispatch is documented in [approval-bound delivery](delivery-approval.md). There is **no time-based crash-expiry guarantee**: a lost machine can leave an open PR labeled until recovery or a person clears it.
+All three labels are **advisory**, never required checks, readiness conditions or merge gates; absence is not approval. A retained verdict is not a promise that later commits were reviewed. No lease, heartbeat, state comment, timer, supervisor or cross-controller lock is added. There is **no time-based crash-expiry guarantee**: a lost machine can leave an open PR labeled until recovery or a person clears it.
 
 ## Closed-event fallback
 

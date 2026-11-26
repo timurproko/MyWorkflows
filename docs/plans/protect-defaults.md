@@ -1,5 +1,8 @@
 # Repository-independent protection defaults
 
+Historical plan: its strict/up-to-date-check policy is superseded by the approved non-strict shared default
+in [review-flow-bot](review-flow-bot.md) and the current [protection migration](../protection-migration.md).
+
 ## Proposal
 
 Replace the central repository inventory with built-in defaults and one optional `.github/protection.json` in the protected repository. No GitHub protection is changed by this refactor, and no `delivery protect --apply` command will be run as part of this task.

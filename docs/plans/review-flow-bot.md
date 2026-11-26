@@ -1,59 +1,51 @@
-# Approval-bound delivery before CI
+# Managed review labels and a bounded delivery loop
 
-Status: approved for implementation; outcomes tracked below.
+Status: re-scoped by the person through the coordinator; all four revised outcomes are implemented.
+Targeted validation passes 434 tests; full local suites are intentionally not part of the approved loop.
 
-## Scope and decisions
-
-Implement the MyWorkflows delivery-bot step of review-before-CI, using `origin/main` as the baseline. The person's decisions override the earlier investigation: approval-bound promotion is the default for every delivery repository, not an opt-in; the only managed stages are Build, Review and Approved; Approved is applied immediately when review covers the current head, independently of CI. There is no intermediate approved/CI stage or chip. Required GitHub checks, not labels, block merge.
-
-This repository has no `openspec/` directory. This committed plan and its draft PR carry the proposal without an Automation block. The coordinator approved implementation after the plan handoff. No other repository, live label definition, variable, permission or protection policy is changed here. Crew's review gate, waiting, dispatch implementation and delta-review orchestration remain separate work.
+This plan supersedes the earlier review-before-CI proposal in this PR. Keep the existing completion-based bot
+promotion/finalization exactly as on main. Remove the approval-bound dispatch implementation, its metadata,
+caller changes, dedicated documentation and obsolete tests through a new commit, without rewriting history.
+This repository has no OpenSpec directory; the PR remains unlinked. No other repository or live policy is changed.
 
 ## Implementation outcomes
 
-### 1. Approval-bound dispatch finalizes completed drafts before promoting them
+### 1. Existing bot promotion remains unchanged
 
-Status: implemented; 72 focused publication, approval, plain-delivery, gate, CLI and workflow tests pass.
+Restore the delivery workflows/caller template, publication scripts, plain delivery, metadata parser, delivery
+check and their tests to the main implementation. Completed valid drafts are promoted automatically and linked
+changes are finalized afterward. No review-approval dispatch, promotion opt-in/default, extra reviewed-head
+metadata or caller migration is introduced. Agents never mark ready.
 
-- Stop promoting both linked and plain drafts merely because every Implementation outcome is checked. Ordinary delivery events leave completed drafts waiting for approval, without manufacturing a failure for the expected waiting state. No repository opt-in variable is introduced.
-- Add `approved_head` to the reusable workflow inputs, the external `templates/delivery-caller.yml` workflow-dispatch inputs and the self-caller. Thread it through the trusted publication entrypoint; accept approval only from an explicit `workflow_dispatch`, never from PR body text, labels or an ordinary event.
-- Validate a complete, valid PR body and the same-repository/default-base identity before mutation. Require the exact approved SHA, or prove it is an ancestor followed only by the configured delivery App's scoped finalization commits and clean base merges. Verify both GitHub author and committer identities, commit shape, allowed paths and clean merge-tree equivalence; a subject, author string or robot suffix alone is insufficient. Human commits, arbitrary bot commits, force-push divergence, ambiguous history and API errors fail closed.
-- Merge the current base when behind, refuse conflicts, finalize/archive the linked change while the PR is still draft, push with an exact-head lease, and record `reviewedHead` and `finalizedHead` in the existing version-3 Automation metadata. Only after branch and body publication and fresh snapshot checks may the bot mark ready. Ready-for-review therefore starts full CI on the final archived head, not before the archive commit.
-- Preserve safe retries if a push or body update succeeds but promotion fails; do not duplicate archive commits or let body metadata authorize an unreviewed head. Recheck head, base, body and draft state at mutation boundaries; concurrent human changes prevent promotion. Dry runs do not mint write credentials or mutate branches, bodies, readiness or labels.
-- Plain PRs follow the same approval requirement and base freshness checks without inventing an OpenSpec archive or Automation block. Preserve the person's manual-ready path and existing ready-PR finalization/refresh behavior. Fixes after a CI failure remain on the ready PR; crew will review only the new commits before another approval dispatch.
-- Extend `openspec-finalization-publication`, `plain-delivery`, `delivery-check`, metadata parsing and `delivery-workflow-events` coverage for default waiting, dispatch plumbing, exact/bot-only approval coverage, rejected heads, finalization-before-ready ordering, stale base, races, retries, publication failures, read-only dry runs and manual-ready compatibility. The Delivery check continues to require the exact finalized head for linked ready PRs.
+### 2. Three managed stages retain assignments and the final record
 
-### 2. The three managed stages are Build, Review and Approved with assignment-preserving migration
+Keep exactly Build, Review and Approved. The stable changes-needed role is named Build, with Rework and Changes
+needed as previous names and the same reference id/node id. Sync renames definitions in place, retaining
+assignments. Open-PR reconciliation includes all three roles and aliases. Closure cleanup and the manual sweep
+clear only Build/Review and retain Approved and its aliases. Keep existing opt-out, read-only modes and safeguards.
 
-Status: implemented; 344 focused rename, label-contract, reconciliation, cleanup, sweep and reference tests pass.
+### 3. Shared guidance defines the approved bounded loop
 
-- Rename the existing changes-needed/Rework role's display name to `🤖 Build`, keeping its stable manifest role identity and reference GitHub id/node id. Include both `🤖 Rework` and `🤖 Changes needed` in `previousNames`; keep the amber color. Do not create a fourth role or make existing consumer assignments disappear.
-- Keep Review purple and Approved green. Build means building/fixing, including after a review or CI failure; Review means an active review; Approved means approval covers the current head immediately, even while checks are pending. CI status belongs to GitHub checks, not an extra label or stage.
-- Ensure definition synchronization renames an old definition with PATCH `new_name`, preserving assignments. Preserve collision reporting and reference-drift safeguards rather than deleting old definitions or silently rebinding source identities. Cover migration from either old name, new/old coexistence and identity preservation.
-- Retain name-agnostic open-PR exclusivity across all three roles and historical aliases. Change close/merge cleanup to remove only Build and Review current/historical assignments; Approved and its historical aliases remain the approval record. Keep unrelated labels, opt-out, pagination, reopen checks, confirmed-absence handling and advisory isolation intact.
-- Audit the shared cleanup-name helper and manual sweep callers so retaining Approved is consistent and does not accidentally exclude it from open-PR reconciliation. No historical sweep or live label apply is run.
-- Extend `label-renames`, `label-contract`, `review-label-reconciliation`, `review-label-cleanup`, sweep and generated-palette regressions for exactly three roles, renamed aliases and Approved retention.
+One concern per pull request. Build the change, run only tests for what was touched, push and report immediately;
+CI and review start together. No full local test suite. Combine CI failures and blocking review findings into
+one fix round. Every finding is BLOCKING or FOLLOW-UP; only blocking findings cause another round. The second
+review covers only the fix, and after two rounds the person decides. Approved means review approval of that
+commit plus green CI on the same commit; Review remains while CI is pending. Update README, label docs and the
+shared skill consistently, and retain contract/label tests for this scope.
 
-### 3. Shared skill and published contracts describe approval, local testing and migration
+### 4. Required checks remain mandatory without strict base freshness
 
-Status: implemented; dispatch/local-test/label contracts and publication-race regressions pass. Full-suite and final-head CI evidence belongs in the task report.
+Additional scope approved by the person: set the shared default-branch ruleset builder's strict status-check
+policy to false, including repository overrides. Preserve required checks and their App pins and all other
+protection. With parallel agents, strict mode sent every open PR through a merge and full CI after each merge;
+CI on the default branch catches rare cross-change interactions. Add migration tests and current documentation,
+read-only audit which repositories differ, and report the exact authorized application command. The coordinator
+already changed crew, xrbuild and herdr-app manually; do not run any live apply here.
 
-- Update the repository's `skills/change-delivery/SKILL.md`, README and delivery docs together. Workers run the full local suite once on the head handed off and list build/test commands and results; CI confirms it. Reviewers check out the reviewed head, build and run the project's full local suite once, and write what they checked. Agents never mark ready, arm auto-merge or merge without explicit permission.
-- Explain that checking all outcomes ends implementation but leaves the draft awaiting approval. Review starts too early are refused with a reason; crew wait does the waiting. Crew owns those implementations in its later task, not this PR.
-- Document Build/Review/Approved, immediate Approved on review acceptance, retained Approved on closure, and CI-failure repair on the existing ready PR followed by delta review. Remove active guidance that retains Review while approved checks run; do not add a Review/CI chip.
-- Publish the exact consumer dispatch contract and caller migration below, including a simple person-only path without requiring a crew reviewer. Update `docs/delivery-labels.md` and any directly affected adoption guidance and contract assertions. Never edit the managed machine-wide skill copy.
+## Validation and handoff
 
-## Dispatch contract to implement and publish
-
-- **Consumer entrypoint:** `.github/workflows/delivery.yml` (the copied caller), invoked on the repository's default branch. MyWorkflows itself uses `.github/workflows/self-delivery.yml`; its reusable `.github/workflows/delivery.yml` remains a `workflow_call` target, not a second dispatch entrypoint.
-- **Inputs:** `pr` is the positive PR number (required string); `approved_head` is the complete 40-hex commit SHA reviewed by the caller (required for a mutating draft-promotion request); `dry_run` is a boolean, default `true`. A read-only audit or existing ready-PR reconcile may omit `approved_head`; omission never promotes a draft. Approval dispatch uses `dry_run=false` explicitly.
-- **Example:** `gh workflow run delivery.yml --ref <default-branch> -f pr=<number> -f approved_head=<full-sha> -f dry_run=false`. Dispatch is an assertion of review approval by a trusted repository writer, not a GitHub review submission and not a request to bypass required checks.
-- **Who may call:** a person with Actions dispatch rights/repository write access, or crew using that person's signed-in credential with the necessary Actions write access. No delivery App private key is supplied to crew; the workflow mints its own scoped App credential. Ordinary agents do not self-approve or dispatch promotion on their own authority.
-- **Responses:** GitHub dispatch acceptance means queued, not promoted. The workflow emits a JSON result in its logs and a job summary identifying the PR, requested approved head, observed head and disposition. An uncovered head yields `disposition: blocked`, `reason: approval-head-mismatch`, a clear error annotation and a nonzero run conclusion, with no branch/body/readiness writes. Invalid or missing approval for a mutating draft dispatch is a separately named blocked result. Successful publication reports the reviewed SHA, finalized/current SHA and whether promotion occurred. Concurrent drift yields an explicit retry result without promoting the changed head. Crew must inspect the completed run and fresh PR state rather than treating dispatch HTTP acceptance as approval coverage.
-- **Person working alone:** finish the draft outcomes and local checks, inspect the exact pushed head, then dispatch with that SHA in the Actions UI or the command above. No crew installation or extra approval label is required. A person may alternatively mark ready manually; agents may not. GitHub still requires the configured checks before merge.
-- **Migration:** callers tracking shared tooling at `main` receive default waiting automatically, but existing copied caller files must forward the new `approved_head` input before approval dispatch works. Document the exact caller edit, self-caller filename exception and aligned `tools_ref` for pinned consumers. Existing completed drafts stay draft: after inspecting their current head, a person dispatches its SHA or manually promotes. Do not grandfather completion ticks, old labels or stale Automation metadata as approval. Already-ready PRs remain ready and retain existing finalization/check behavior. There is no bulk promotion, repo opt-in or required crew deployment.
-
-## Validation and handoff after implementation approval
-
-Add focused Vitest coverage with each delivered outcome, commit/push it and tick the corresponding PR outcome as it lands. Before implementation handoff run `npm test` once and the full generated-palette validation (`node test/generated-palettes.mjs`) on the head handed off; record exact commands and results, without weakening tests or suppressing failures. Reviewers have the same local build/test reporting duty. MyWorkflows has no separate build script.
-
-Bring the branch current with the default branch, add specific Acceptance bullets, validate the final PR body and tick the final outcome only when implemented. Push, pull any delivery-bot commit before subsequent pushes, and do not hand off implementation until its bot publication has landed and every check on the final head has passed. The current trusted workflow on main owns this PR's automation until this change merges; branch changes cannot alter the running trusted workflow. This PR is plain, so the bot has no archive commit to publish; its final action here is readiness, not a fabricated finalization commit. Never mark ready or merge manually. At the plan stage, keep every outcome unchecked and stop for approval; no bot finalization or implementation readiness is claimed.
+Run targeted label, review-loop contract, protection and existing promotion checks, push the new commit normally, update
+the approved PR outcomes/acceptance text, and report immediately with current CI status. Do not wait for CI or
+review before reporting, run full local suites, mark ready, arm auto-merge or merge. Previous full-suite results
+are historical, not validation of the new head. The earlier machine-specific bootstrap failures are outside this
+scope; they reproduced with unchanged main sources locally and passed on main's Linux CI.

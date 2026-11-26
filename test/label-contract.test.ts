@@ -59,7 +59,8 @@ describe("stable reference-driven label and runner contract", () => {
       expect(text).toContain("Closed/merged cleanup removes Build and Review");
       expect(text).toContain("current/historical assignments; Approved stays as the record");
       expect(text).toContain("including its aliases");
-      expect(text).toContain("without waiting for CI");
+      expect(text).toContain("the review approved that commit and CI is green on that same commit");
+      expect(text).not.toContain("without waiting for CI");
       expect(text).toContain("until the next review sets one");
       expect(text).toContain("delivery labels-sweep --repo owner/name");
       expect(text).toContain("read-only");

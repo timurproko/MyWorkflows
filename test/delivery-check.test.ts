@@ -39,14 +39,6 @@ describe("delivery check", () => {
     await expect(run({ body: fence(finalized) }, { validateFinalized: async () => { throw new Error("network"); } })).rejects.toThrow("network");
   });
 
-  it("accepts reviewedHead metadata but never lets it replace exact finalization or draft readiness", async () => {
-    const reviewed = { ...finalized, reviewedHead: "a".repeat(40) };
-    await expect(run({ body: fence(reviewed) })).resolves.toEqual({ outcome: "pass", reason: "finalized" });
-    await expect(run({ draft: true, body: fence(reviewed) })).resolves.toEqual({ outcome: "wait", reason: "draft" });
-    await expect(run({ body: fence({ ...reviewed, reviewedHead: head, finalizedHead: "c".repeat(40) }) }))
-      .resolves.toEqual({ outcome: "wait", reason: "awaiting-finalization" });
-  });
-
   it("refuses a ready pull request that carries agent attribution, before any pass", async () => {
     const inspectAttribution = async () => "abc1234 co-authored by Copilot";
     await expect(run({ body: fence(finalized) }, { inspectAttribution }))

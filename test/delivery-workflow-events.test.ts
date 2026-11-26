@@ -41,22 +41,6 @@ function enabled(section: string, action: string, eventName = "pull_request_targ
   }));
 }
 
-describe("approval dispatch contract", () => {
-  it("forwards approved_head through both callers and trusted tooling without interpolating shell input", async () => {
-    for (const path of ["templates/delivery-caller.yml", ".github/workflows/self-delivery.yml"]) {
-      const workflow = await load(path);
-      expect(workflow).toContain("      approved_head:\n");
-      expect(workflow).toContain("      approved_head: ${{ inputs.approved_head }}");
-      expect(workflow).toContain("        default: true");
-    }
-    const workflow = await load(sharedPath);
-    expect(workflow).toContain("      approved_head:\n");
-    expect(workflow).toContain("      APPROVED_HEAD: ${{ inputs.approved_head }}");
-    expect(workflow).toContain('args+=(--approved-head "$APPROVED_HEAD")');
-    expect(workflow).not.toContain("DELIVERY_PROMOTE_AFTER_REVIEW");
-  });
-});
-
 describe("advisory label-sync scheduling", () => {
   it("serializes repository-wide work with a multi-pending queue, not pending replacement", async () => {
     const workflow = await load(sharedPath);
