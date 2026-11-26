@@ -112,6 +112,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install pinned trusted replay tooling without hooks
+        run: npm ci --ignore-scripts --omit=dev
+
       - name: Decide whether this exact head is deliverable
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -146,6 +149,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install pinned trusted replay tooling without hooks
+        run: npm ci --ignore-scripts --omit=dev
+
       - name: Mint the event-producing App identity for branch updates
         id: app
         uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
@@ -158,6 +164,8 @@ jobs:
       - name: Refresh every stale ready pull request against the current target
         env:
           BRANCH_REFRESH_TOKEN: ${{ steps.app.outputs.token }}
+          DELIVERY_BOT_APP_ID: ${{ secrets.app_id }}
+          DELIVERY_BOT_PRIVATE_KEY: ${{ secrets.app_private_key }}
         run: node scripts/refresh-ready-pull-requests.mjs
 
   branch-cleanup:

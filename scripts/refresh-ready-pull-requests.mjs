@@ -1,6 +1,10 @@
 import { appendFile } from "node:fs/promises";
 import { refreshReadyPullRequests } from "./ready-pull-request-refresh.mjs";
 import { targetBranch } from "./delivery-target.mjs";
+import { createArchivePublisher } from "./openspec-archive-publication.mjs";
+import { createArchiveReader } from "./openspec-archive-github.mjs";
+import { reconcileFinalization } from "./openspec-finalization-publication.mjs";
+import { resolve } from "node:path";
 
 // Security: only the event-producing App token may update branches; GITHUB_TOKEN is never a fallback because its pushes start no CI.
 const token = process.env.BRANCH_REFRESH_TOKEN;
@@ -11,12 +15,19 @@ if (!token || !repository) throw new Error("the branch-refresh App token and Git
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error(`repository ${repository} is not a valid repository identity`);
 
 let results;
+let publisher;
+const deadline = Date.now() + 9 * 60 * 1000;
 try {
-  results = await refreshReadyPullRequests({ repository, request });
+  results = await refreshReadyPullRequests({ repository, request, reconcileLinked: async number => {
+    publisher ??= await createArchivePublisher({ repository, appId: process.env.DELIVERY_BOT_APP_ID,
+      privateKey: process.env.DELIVERY_BOT_PRIVATE_KEY, deadline });
+    const reader = createArchiveReader({ repository, token, apiUrl, deadline });
+    return await reconcileFinalization({ reader, publisher, number, deadline, toolRoot: resolve("node_modules/@fission-ai/openspec") });
+  } });
 } catch (error) {
   await report(`Ready pull-request refresh failed before completing the pass: ${error?.message ?? error}`);
   throw error;
-}
+} finally { await publisher?.close(); }
 if (results.length === 0) await report(`Ready pull-request refresh: no open pull requests target ${targetBranch()}.`);
 for (const result of results) {
   const evidence = {

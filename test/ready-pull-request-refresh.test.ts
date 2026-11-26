@@ -60,10 +60,13 @@ class FakeGitHub {
   private readonly pulls: Map<number, FakePull>;
   private revision = 1000;
 
-  // Legacy API-response cases deliberately exercise strict repositories; policy regressions pass builder output.
+  // Mutation-response fixtures model a known conflict at read time which may clear before PUT.
+  // Policy cases pass explicit rules and keep their original mergeability.
   constructor(pulls: readonly FakePull[], readonly rules: unknown = [{ type: "required_status_checks",
     parameters: { strict_required_status_checks_policy: true } }]) {
-    this.pulls = new Map(pulls.map(pull => [pull.number, { ...pull }]));
+    const conflictProbe = arguments.length < 2;
+    this.pulls = new Map(pulls.map(pull => [pull.number, { ...pull,
+      mergeable: conflictProbe && pull.mergeable === undefined ? false : pull.mergeable }]));
   }
 
   readonly request: RefreshRequester = async (path, options = {}) => {
@@ -144,7 +147,7 @@ describe("ready pull-request refresh classification", () => {
   it("updates only heads that lack the current target", () => {
     const eligible = classifyRefreshCandidate(metadata({ number: 7, head: sha(1) }), repository);
     expect(decideRefresh(eligible, { behind_by: 0 }, target).disposition).toBe("current");
-    expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: true })).toMatchObject({ disposition: "update", behindBy: 3, targetSha: target });
+    expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: true })).toMatchObject({ disposition: "blocked", behindBy: 3, targetSha: target });
     expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: false, mergeable: true })).toMatchObject({ disposition: "skipped" });
     expect(decideRefresh(eligible, { behind_by: 3 }, target, { strict: false, mergeable: false })).toMatchObject({ disposition: "update" });
     expect(decideRefresh(eligible, { behind_by: 3 }, target)).toMatchObject({ disposition: "deferred" });
@@ -181,12 +184,12 @@ describe("refresh follows live protection instead of creating non-strict CI chur
       expect((await github.request(`/repos/${repository}/pulls/2`)).body.head.sha).toBe(sha(2));
     });
 
-  it("still refreshes a behind head when live protection remains strict despite the new non-strict default", async () => {
+  it("reports strict drift without rewriting an independent ready head",  async () => {
     const rules = buildRuleset(DEFAULT_DECLARATIONS[0], "develop").rules;
     rules.find(rule => rule.type === "required_status_checks")!.parameters.strict_required_status_checks_policy = true;
     const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
-    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0]).toMatchObject({ disposition: "updated" });
-    expect(github.updates).toEqual([{ number: 2, expected: sha(2) }]);
+    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0]).toMatchObject({ disposition: "blocked", reason: expect.stringContaining("configuration drift") });
+    expect(github.updates).toEqual([]);
   });
 
   it("attempts conflicts but defers unknown mergeability without touching clean non-strict siblings", async () => {
@@ -215,7 +218,8 @@ describe("refresh follows live protection instead of creating non-strict CI chur
     const rules = [...Array.from({ length: 100 }, () => ({ type: "pull_request" })),
       { type: "required_status_checks", parameters: { strict_required_status_checks_policy: true } }];
     const github = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
-    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0].disposition).toBe("updated");
+    expect((await refreshReadyPullRequests({ repository, request: github.request }))[0].disposition).toBe("blocked");
+    expect(github.updates).toEqual([]);
     expect(github.calls).toContain(`GET /repos/${repository}/rules/branches/develop?per_page=100&page=2`);
     const bounded = new FakeGitHub([{ number: 2, head: sha(2), behind: 1 }], rules);
     expect((await refreshReadyPullRequests({ repository, request: bounded.request, maxPages: 1 }))[0].disposition).toBe("failed");

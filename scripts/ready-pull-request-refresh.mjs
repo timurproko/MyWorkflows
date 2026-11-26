@@ -1,4 +1,6 @@
 import { targetBranch } from "./delivery-target.mjs";
+import { parseImplementation } from "./openspec-archive-policy.mjs";
+import { archiveReaderFromGet, inspectDeliveryBaseImpact, inspectVersion3DeliverySnapshot } from "./openspec-archive-github.mjs";
 const FULL_SHA = /^[0-9a-f]{40}$/;
 const PAGE_SIZE = 100;
 const DEFAULT_MAX_PAGES = 10;
@@ -36,7 +38,8 @@ export function decideRefresh(eligibility, comparison, targetSha, { strict = fal
     return { ...eligibility, disposition: "failed", targetSha, reason: "comparison response is malformed" };
   }
   if (behindBy === 0) return { ...eligibility, disposition: "current", targetSha };
-  if (!strict && mergeable !== false) {
+  if (strict && mergeable !== false) return { ...eligibility, targetSha, behindBy, disposition: "blocked", reason: "configuration drift: strict checks require an independently approved settings change" };
+  if (mergeable !== false) {
     return { ...eligibility, targetSha, behindBy, disposition: mergeable === true ? "skipped" : "deferred",
       reason: mergeable === true ? "non-strict protection; conflict-free head is merely behind" : "mergeability is not yet known; no refresh attempted" };
   }
@@ -84,7 +87,7 @@ export function interpretBranchUpdate(decision, response) {
  * failures are reported without stopping independent candidates; listing and
  * credential failures abort the pass.
  */
-export async function refreshReadyPullRequests({ repository, request, maxPages = DEFAULT_MAX_PAGES }) {
+export async function refreshReadyPullRequests({ repository, request, reconcileLinked, maxPages = DEFAULT_MAX_PAGES }) {
   const prefix = `/repos/${repository}`;
   const numbers = [];
   for (let page = 1; ; page += 1) {
@@ -135,6 +138,23 @@ export async function refreshReadyPullRequests({ repository, request, maxPages =
     const current = decideRefresh(eligibility, comparison, targetSha);
     if (current.disposition === "current" || current.disposition === "failed") return current;
     const decision = decideRefresh(eligibility, comparison, targetSha, { strict: await strict(), mergeable: pull.mergeable });
+    const implementation = parseImplementation(pull.body ?? "");
+    if (implementation) {
+      if (implementation.version !== 3 || !implementation.archive || implementation.finalizedHead !== eligibility.headSha) {
+        return { ...eligibility, disposition: "deferred", reason: "linked head awaits normal finalization" };
+      }
+      const reader = archiveReaderFromGet(repository, async path => (await request(path)).body);
+      const candidate = { ...pull, base: { ...pull.base, sha: targetSha } };
+      const value = await inspectVersion3DeliverySnapshot(reader, candidate, implementation, eligibility.headSha);
+      const impact = await inspectDeliveryBaseImpact(reader, candidate, implementation, value);
+      if (impact.disposition === "invalidated") {
+        if (!reconcileLinked) return { ...eligibility, disposition: "blocked", reason: "spec base invalidated; trusted finalization required" };
+        const result = await reconcileLinked(number);
+        return { ...eligibility, disposition: result.disposition, reason: "spec base invalidated", pushedHead: result.pushedHead };
+      }
+      // Conflict repair of linked heads must use the scoped publisher, not a blind update-branch.
+      if (pull.mergeable === false) return { ...eligibility, disposition: "blocked", reason: "merge conflict requires manual resolution" };
+    }
     if (decision.disposition !== "update") return decision;
 
     // Concurrency: the expected head binds this decision to the exact SHA just compared; GitHub rejects it if the branch moved.
