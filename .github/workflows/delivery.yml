@@ -10,6 +10,10 @@ on:
         description: Implementation PR number for a manual reconcile
         type: string
         required: false
+      approved_head:
+        description: Exact reviewed head SHA; only workflow_dispatch may authorize draft promotion
+        type: string
+        required: false
       dry_run:
         description: Report the candidate classification without pushing
         type: boolean
@@ -54,6 +58,7 @@ jobs:
     env:
       REQUESTED_PR: ${{ inputs.pr || github.event.pull_request.number }}
       FINALIZATION_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      APPROVED_HEAD: ${{ inputs.approved_head }}
     steps:
       - name: Check out trusted delivery tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,6 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(--pr "$REQUESTED_PR")
+          if [ -n "$APPROVED_HEAD" ]; then args+=(--approved-head "$APPROVED_HEAD"); fi
           if [ "$FINALIZATION_DRY_RUN" = 'true' ]; then args+=(--dry-run); fi
           node scripts/publish-openspec-finalization.mjs "${args[@]}"
 

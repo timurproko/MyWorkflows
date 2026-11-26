@@ -4,12 +4,11 @@ import {
 } from "./openspec-acceptance-checklist.mjs";
 import { archiveFailure, SHA } from "./openspec-archive-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
-import { samePromotionSnapshot } from "./openspec-finalization-publication.mjs";
+
 
 /**
- * Plain delivery: the same draft, ticks and automatic readiness for a pull request that links no OpenSpec
- * change, which is every pull request in a repository without OpenSpec. There is nothing to finalize, so
- * promotion is the whole of the automation's part.
+ * Plain delivery uses the same approval-bound promotion as linked changes, without archive metadata.
+ * This module validates the body and association; the trusted publication engine owns head proof and readiness.
  */
 
 const checked = body => {
@@ -41,11 +40,9 @@ export function inspectPlainBody(body, { final = false } = {}) {
 }
 
 /**
- * Mark one complete unlinked draft ready. A draft without an Implementation checklist, or with unticked
- * items, is an ordinary draft and is left alone quietly; a fully ticked one that is refused is `blocked`,
- * so the author sees why it stayed a draft.
+ * Validate one complete unlinked draft. No mutation or approval inference happens here.
  */
-export async function promotePlainDraft({ reader, publisher, pull, number, inspectUnassociated = inspectUnassociatedPull }) {
+export async function inspectPlainDraft({ reader, pull, inspectUnassociated = inspectUnassociatedPull }) {
   const head = pull.head?.sha ?? null;
   const skipped = reason => ({ disposition: "skipped", reason, head, commits: [] });
   const blocked = reason => ({ disposition: "blocked", reason: `draft-${reason}`, head, commits: [] });
@@ -76,19 +73,5 @@ export async function promotePlainDraft({ reader, publisher, pull, number, inspe
   const association = await inspectUnassociated(reader, pull);
   if (association.blocked) return blocked(association.reason);
 
-  const target = (await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
-  if (!SHA.test(target ?? "")) throw archiveFailure("target-identity");
-  try {
-    await reader.ancestor(target, head);
-  } catch (error) {
-    if (typeof error?.archiveCode === "string") return blocked("delivery-target-stale");
-    throw error;
-  }
-
-  const current = await reader.get(`${reader.prefix}/pulls/${number}`);
-  if (!samePromotionSnapshot(current, pull, reader.repository)) {
-    return { disposition: "retry", reason: "draft-changed-before-ready", head, commits: [] };
-  }
-  await publisher.ready(number, pull.node_id);
-  return { disposition: "promoted", head, promoted: true, commits: [] };
+  return { disposition: "eligible", head, commits: [] };
 }

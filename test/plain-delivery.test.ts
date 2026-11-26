@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inspectDeliveryBody } from "../scripts/check-delivery-body.mjs";
-import { inspectPlainBody, promotePlainDraft } from "../scripts/plain-delivery.mjs";
+import { inspectPlainBody, inspectPlainDraft } from "../scripts/plain-delivery.mjs";
 
 const head = "b".repeat(40);
 const base = "a".repeat(40);
@@ -17,7 +17,7 @@ function setup({ pullBody = body(), pull = {}, ancestry = true, association = { 
     get: async (path: string) => path.includes("/git/ref/") ? { object: { sha: target } } : changed ? { ...snapshot, body: `${pullBody}\nedited` } : snapshot,
     ancestor: async () => { if (!ancestry) throw Object.assign(new Error("ancestry"), { archiveCode: "commit-ancestry" }); } };
   const publisher = { ready: async (...args: unknown[]) => { ready.push(args); } };
-  const run = () => promotePlainDraft({ reader, publisher, pull: snapshot, number: 4, inspectUnassociated: async () => association });
+  const run = () => inspectPlainDraft({ reader, pull: snapshot, inspectUnassociated: async () => association });
   return { run, ready };
 }
 
@@ -38,11 +38,11 @@ describe("plain delivery body", () => {
   });
 });
 
-describe("plain draft promotion", () => {
-  it("marks a complete, current, same-repository draft ready", async () => {
+describe("plain draft validation never marks ready", () => {
+  it("returns eligibility only, leaving approval proof and promotion to trusted publication", async () => {
     const { run, ready } = setup();
-    await expect(run()).resolves.toMatchObject({ disposition: "promoted", head, promoted: true });
-    expect(ready).toEqual([[4, "PR_node"]]);
+    await expect(run()).resolves.toMatchObject({ disposition: "eligible", head });
+    expect(ready).toEqual([]);
   });
 
   it("leaves an ordinary or unfinished draft alone quietly", async () => {
@@ -57,7 +57,7 @@ describe("plain draft promotion", () => {
     const cases: [Record<string, unknown>, string][] = [
       [{ pullBody: body({ acceptance: "" }) }, "draft-acceptance-layout-sections"],
       [{ association: { blocked: true, reason: "missing-implementation-association", changes: ["example"] } }, "draft-missing-implementation-association"],
-      [{ ancestry: false }, "draft-delivery-target-stale"],
+
     ];
     for (const [options, reason] of cases) {
       const { run, ready } = setup(options);
@@ -66,7 +66,7 @@ describe("plain draft promotion", () => {
     }
   });
 
-  it("never promotes a fork, another base, or a draft that changed meanwhile", async () => {
+  it("refuses a fork or another base without performing any readiness writes", async () => {
     for (const pull of [{ head: { ref: "feat/example", sha: head, repo: { full_name: "fork/repo" } } },
       { base: { ref: "release", sha: base, repo: { full_name: "owner/repo" } } }]) {
       const { run, ready } = setup({ pull });
@@ -74,7 +74,7 @@ describe("plain draft promotion", () => {
       expect(ready).toEqual([]);
     }
     const { run, ready } = setup({ changed: true });
-    await expect(run()).resolves.toMatchObject({ disposition: "retry", reason: "draft-changed-before-ready" });
+    await expect(run()).resolves.toMatchObject({ disposition: "eligible" });
     expect(ready).toEqual([]);
   });
 });

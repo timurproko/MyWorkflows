@@ -4,24 +4,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { inspectUnassociatedPull } from "./openspec-association-policy.mjs";
-import {
-  assertImplementationOnlyProgress, parseImplementationAcceptanceScenarios, parseImplementationProgress,
-} from "./openspec-acceptance-checklist.mjs";
+import { assertImplementationOnlyProgress, parseImplementationAcceptanceScenarios, parseImplementationProgress } from "./openspec-acceptance-checklist.mjs";
 import { prepareSinglePrDelivery, replaceImplementationMetadata } from "./openspec-delivery-finalization.mjs";
 import { readCanonicalSpecs } from "./openspec-delivery-git.mjs";
 import { archiveFailure, archivePaths, assertArchiveDiff, parseImplementation, SHA } from "./openspec-archive-policy.mjs";
 import { targetBranch } from "./delivery-target.mjs";
-import { promotePlainDraft } from "./plain-delivery.mjs";
+import { inspectPlainDraft } from "./plain-delivery.mjs";
+import { assertApprovalCovers, sameDeliverySnapshot } from "./delivery-approval.mjs";
 
 const execute = promisify(execFile);
 const ARCHIVE_ROOT = "openspec/changes/archive/";
 const MAX_OUTPUT = 8 * 1024 * 1024;
+const utcDate = () => new Date().toISOString().slice(0, 10);
 
-function utcDate(now = Date.now()) {
-  return new Date(now).toISOString().slice(0, 10);
-}
-
-/** Decide whether the workflow has anything to do for this pull request before touching Git. */
+/** Classify identities before touching Git. PR content is data, never executable tooling. */
 export function classifyFinalizationCandidate(pull, repository, { allowDraft = false } = {}) {
   if (!pull || pull.state !== "open") return { skip: "closed" };
   if (pull.draft !== false && pull.draft !== true) throw archiveFailure("finalization-candidate-identity");
@@ -30,13 +26,17 @@ export function classifyFinalizationCandidate(pull, repository, { allowDraft = f
   try { implementation = parseImplementation(pull.body ?? ""); } catch { return { skip: "malformed-metadata" }; }
   if (!implementation) return { skip: "unassociated" };
   if (implementation.version !== 3) return { skip: `legacy-version-${implementation.version}` };
-  if (pull.base?.ref !== targetBranch() || pull.base.repo?.full_name !== repository || pull.head?.repo?.full_name !== repository
-    || !SHA.test(pull.head.sha ?? "") || typeof pull.head.ref !== "string" || !/^[A-Za-z0-9._\/-]{1,200}$/.test(pull.head.ref)
-    || pull.head.ref.split("/").some(part => !part || part.startsWith(".") || part.endsWith(".lock") || part === "..")) {
+  if (!eligibleIdentity(pull, repository)) {
     if (pull.draft) return { skip: "draft-ineligible-identity" };
     throw archiveFailure("finalization-candidate-identity");
   }
   return { implementation, draft: pull.draft };
+}
+
+function eligibleIdentity(pull, repository) {
+  return pull.base?.ref === targetBranch() && pull.base.repo?.full_name === repository && pull.head?.repo?.full_name === repository
+    && SHA.test(pull.head.sha ?? "") && typeof pull.head.ref === "string" && /^[A-Za-z0-9._\/-]{1,200}$/.test(pull.head.ref)
+    && pull.head.ref.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".lock") && part !== "..");
 }
 
 function scratchEnvironment(root, token) {
@@ -50,10 +50,9 @@ function scratchEnvironment(root, token) {
   return env;
 }
 
-/** Locate the one dated archive directory of the change in a checkout, or null when the change is still active. */
 async function archivedForm(checkout, change) {
   const names = await readdir(join(checkout, ARCHIVE_ROOT)).catch(() => []);
-  const matches = names.filter(name => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${change.replaceAll("-", "\\-")}$`).test(name));
+  const matches = names.filter(name => new RegExp(`^\\d{4}-\\d{2}-\\d{2}-${change}$`).test(name));
   if (matches.length > 1) throw archiveFailure("finalization-archive-ambiguous");
   return matches.length ? `${ARCHIVE_ROOT}${matches[0]}/` : null;
 }
@@ -72,128 +71,64 @@ async function archiveCapabilities(checkout, archive) {
 }
 
 export function samePromotionSnapshot(current, expected, repository) {
-  return current?.number === expected.number && current.state === "open" && current.draft === true
-    && current.node_id === expected.node_id && current.body === expected.body
-    && current.base?.ref === expected.base?.ref && current.base?.sha === expected.base?.sha
-    && current.base?.repo?.full_name === repository
-    && current.head?.ref === expected.head?.ref && current.head?.sha === expected.head?.sha
-    && current.head?.repo?.full_name === repository;
+  return expected.draft === true && sameDeliverySnapshot(current, expected, repository);
 }
 
-const DRAFT_INFRASTRUCTURE_FAILURES = new Set([
-  "archive-deadline", "finalization-git", "publication-app-setup", "target-identity", "target-advanced",
-]);
-
-/**
- * Classify a refused draft. Once the author has checked every task-list item, a content refusal is `blocked` so the
- * run fails visibly; an unfinished draft stays a quiet `skipped`.
- */
-function draftBlock(error, declaredComplete = false) {
-  if (error?.archiveCode === "finalization-head-changed") return { disposition: "retry", reason: "draft-head-changed", commits: [] };
-  return typeof error?.archiveCode === "string" && !DRAFT_INFRASTRUCTURE_FAILURES.has(error.archiveCode)
-    ? { disposition: declaredComplete ? "blocked" : "skipped", reason: `draft-${error.archiveCode}`, commits: [] }
-    : null;
-}
-
-/** Validate one exact completed draft without writing its branch, then perform only the ready mutation. */
-async function promoteCompletedDraft({ reader, publisher, pull, implementation, number, toolRoot, gitImpl, remoteUrl, date, deadline }) {
-  let declaredComplete = false;
+function inspectLinkedDraft(pull) {
+  let complete = false;
   try {
     const progress = parseImplementationProgress(pull.body ?? "", { requireComplete: true });
     if (progress.format !== "checklist") throw archiveFailure("implementation-progress-legacy-draft");
-    declaredComplete = true;
+    complete = true;
     assertImplementationOnlyProgress(progress.items);
     parseImplementationAcceptanceScenarios(pull.body ?? "", 3);
+    return null;
   } catch (error) {
-    const blocked = draftBlock(error, declaredComplete);
-    if (blocked) return { ...blocked, head: pull.head.sha };
-    throw error;
+    if (!error.archiveCode) throw error;
+    return { disposition: complete ? "blocked" : "skipped", reason: `draft-${error.archiveCode}`, head: pull.head.sha, commits: [] };
   }
-  if (typeof pull.node_id !== "string" || !pull.node_id) throw archiveFailure("finalization-candidate-identity");
-  const target = (await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
-  if (!SHA.test(target ?? "")) throw archiveFailure("target-identity");
-  // Rationale: PR base metadata can lag the target branch; fetched ancestry below establishes current-target readiness.
-  const root = await realpath(await mkdtemp(join(tmpdir(), "openspec-readiness-")));
-  const checkout = join(root, "checkout");
-  await mkdir(checkout);
-  const env = scratchEnvironment(root, publisher.token);
-  async function git(args, { allowFailure = false } = {}) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) throw archiveFailure("archive-deadline");
-    try { return (await gitImpl("git", args, { cwd: checkout, env, timeout: Math.min(120_000, remaining), maxBuffer: MAX_OUTPUT })).stdout.trim(); }
-    catch (error) {
-      if (allowFailure) return null;
-      throw archiveFailure("finalization-git", args[0]);
-    }
-  }
-  try {
-    await git(["init", "--quiet"]);
-    await git(["remote", "add", "origin", remoteUrl ?? `https://github.com/${reader.repository}.git`]);
-    await git(["sparse-checkout", "set", "--cone", "openspec"]);
-    await git(["fetch", "--quiet", "--filter=blob:none", "origin", `+refs/heads/${targetBranch()}:refs/remotes/origin/${targetBranch()}`,
-      `+refs/heads/${pull.head.ref}:refs/remotes/origin/candidate`]);
-    if (await git(["rev-parse", `refs/remotes/origin/${targetBranch()}`]) !== target) throw archiveFailure("target-advanced");
-    if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== pull.head.sha) throw archiveFailure("finalization-head-changed");
-    await git(["checkout", "--quiet", "--detach", pull.head.sha]);
-    if ((await git(["merge-base", "--is-ancestor", target, pull.head.sha], { allowFailure: true })) === null) {
-      throw archiveFailure("delivery-target-stale");
-    }
-    // Invariant: a draft whose exact head finalization already produced holds its archived form, not an active
-    // change, so it is promoted on that tree; the ready reconciliation then re-validates it as usual.
-    if (implementation.finalizedHead === pull.head.sha) {
-      const archive = await archivedForm(checkout, implementation.change);
-      const activePresent = (await readdir(join(checkout, `openspec/changes/${implementation.change}/`)).catch(() => null)) !== null;
-      if (!archive || activePresent || archive !== implementation.archive) throw archiveFailure("finalization-redraft-form");
-    } else {
-      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: target, env, gitImpl });
-      await prepareSinglePrDelivery({ root: checkout, change: implementation.change, repository: reader.repository, sourcePr: number,
-        body: pull.body ?? "", specBaseSha: target, date, targetSpecs, write: false, toolRoot });
-    }
-  } catch (error) {
-    const blocked = draftBlock(error, true);
-    if (blocked) return { ...blocked, head: pull.head.sha };
-    throw error;
-  } finally { await rm(root, { recursive: true, force: true }); }
-  const current = await reader.get(`${reader.prefix}/pulls/${number}`);
-  if (!samePromotionSnapshot(current, pull, reader.repository)) {
-    return { disposition: "retry", reason: "draft-changed-before-ready", head: pull.head.sha, commits: [] };
-  }
-  const currentTarget = (await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
-  if (!SHA.test(currentTarget ?? "")) throw archiveFailure("target-identity");
-  if (currentTarget !== target) return { disposition: "retry", reason: "draft-target-changed", head: pull.head.sha, commits: [] };
-  await publisher.ready(number, pull.node_id);
-  return { disposition: "promoted", head: pull.head.sha, promoted: true, commits: [] };
 }
 
-/**
- * Promote one complete draft or reconcile one ready version-3 pull request to its finalized form: finalize an active
- * head, re-finalize a drifted one, or merge the target branch first when the head is behind.
- */
+/** Finalize on the draft and publish metadata before readiness. All repositories wait for approval by default. */
 export async function reconcileFinalization({ reader, publisher, number, toolRoot, gitImpl = execute, remoteUrl = null,
-  date = utcDate(), deadline = Infinity }) {
+  date = utcDate(), deadline = Infinity, approvedHead = null, approvalRequested = false, inspectUnassociated = inspectUnassociatedPull }) {
   if (!Number.isSafeInteger(number) || number < 1) throw archiveFailure("implementation-pr");
   if (!publisher || publisher.repository !== reader.repository || !publisher.actor?.endsWith("[bot]")) throw archiveFailure("publication-app-setup");
   const prefix = reader.prefix;
   const pull = await reader.get(`${prefix}/pulls/${number}`);
   if (pull.number !== number) throw archiveFailure("implementation-pr");
   const classified = classifyFinalizationCandidate(pull, reader.repository, { allowDraft: true });
-  if (classified.skip) {
-    if (classified.skip === "unassociated" && !pull.draft) {
-      const association = await inspectUnassociatedPull(reader, pull);
+  const plain = classified.skip === "unassociated";
+  if (classified.skip && !plain) return { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null };
+  if (plain) {
+    if (!pull.draft) {
+      const association = await inspectUnassociated(reader, pull);
       if (association.blocked) throw archiveFailure(association.reason, association.changes.join(","));
+      // A ready plain PR has no finalization work, unless explicitly dispatched to reconcile its base.
+      if (!approvalRequested) return { disposition: "skipped", reason: "unassociated", head: pull.head.sha };
+    } else {
+      const result = await inspectPlainDraft({ reader, pull, inspectUnassociated });
+      if (result.disposition !== "eligible") return result;
     }
-    if (classified.skip === "unassociated" && pull.draft) return await promotePlainDraft({ reader, publisher, pull, number });
-    return { disposition: "skipped", reason: classified.skip, head: pull.head?.sha ?? null };
+    if (!eligibleIdentity(pull, reader.repository)) throw archiveFailure("finalization-candidate-identity");
+  } else if (pull.draft) {
+    const refusal = inspectLinkedDraft(pull);
+    if (refusal) return refusal;
   }
-  const { implementation } = classified;
-  if (classified.draft) return await promoteCompletedDraft({ reader, publisher, pull, implementation, number, toolRoot, gitImpl,
-    remoteUrl, date, deadline });
-  const change = implementation.change;
+  const head = pull.head.sha;
+  const approval = approvalRequested && approvedHead !== null;
+  const blocked = reason => ({ disposition: "blocked", reason, head, approvedHead, commits: [] });
+  if (pull.draft && !approvalRequested) return { disposition: "waiting", reason: "awaiting-approval", head, commits: [] };
+  if (pull.draft && !approvedHead) return blocked("approval-head-required");
+  if (approval && !SHA.test(approvedHead)) return blocked("approval-head-invalid");
+  // Only trusted dispatch callers may assert approval; a body fence or ordinary event cannot do so.
+  if (approvedHead && !approvalRequested) return blocked("approval-dispatch-required");
+  if (pull.draft && (typeof pull.node_id !== "string" || !pull.node_id)) throw archiveFailure("finalization-candidate-identity");
+  const implementation = classified.implementation;
+  const change = implementation?.change;
   const target = (await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`)).object?.sha;
   if (!SHA.test(target ?? "")) throw archiveFailure("target-identity");
-  const head = pull.head.sha;
   const branch = pull.head.ref;
-
   const root = await realpath(await mkdtemp(join(tmpdir(), "openspec-finalization-")));
   const checkout = join(root, "checkout");
   await mkdir(checkout);
@@ -203,7 +138,7 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw archiveFailure("archive-deadline");
     try { return (await gitImpl("git", args, { cwd: checkout, env, timeout: Math.min(120_000, remaining), maxBuffer: MAX_OUTPUT })).stdout.trim(); }
-    catch (error) {
+    catch {
       if (allowFailure) return null;
       throw archiveFailure("finalization-git", args[0]);
     }
@@ -212,30 +147,36 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
   try {
     await git(["init", "--quiet"]);
     await git(["remote", "add", "origin", remoteUrl ?? `https://github.com/${reader.repository}.git`]);
-    await git(["sparse-checkout", "set", "--cone", "openspec"]);
+    if (!plain) await git(["sparse-checkout", "set", "--cone", "openspec"]);
     await git(["fetch", "--quiet", "--filter=blob:none", "origin", `+refs/heads/${targetBranch()}:refs/remotes/origin/${targetBranch()}`, `+refs/heads/${branch}:refs/remotes/origin/candidate`]);
     if (await git(["rev-parse", `refs/remotes/origin/${targetBranch()}`]) !== target) throw archiveFailure("target-advanced");
-    if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== head) throw archiveFailure("finalization-head-changed");
+    if (await git(["rev-parse", "refs/remotes/origin/candidate"]) !== head) return { disposition: "retry", reason: "finalization-head-changed", head, commits: [] };
     await git(["checkout", "--quiet", "--detach", head]);
-
-    const behind = (await git(["merge-base", "--is-ancestor", target, head], { allowFailure: true })) === null;
-    let archive = await archivedForm(checkout, change);
+    if (approval) {
+      try { await assertApprovalCovers({ reader, publisher, git, approvedHead, head, target, change }); }
+      catch (error) {
+        if (error.archiveCode === "approval-head-mismatch") return blocked(error.archiveCode);
+        throw error;
+      }
+    }
+    const behind = await git(["merge-base", "--is-ancestor", target, head], { allowFailure: true }) === null;
+    let archive = plain ? null : await archivedForm(checkout, change);
     const active = `openspec/changes/${change}/`;
-    const activePresent = (await readdir(join(checkout, active)).catch(() => null)) !== null;
+    const activePresent = plain ? false : await readdir(join(checkout, active)).then(() => true, () => false);
     if (archive && activePresent) throw archiveFailure("finalization-archive-ambiguous");
-    let effectiveDate = archive ? archive.slice(ARCHIVE_ROOT.length, ARCHIVE_ROOT.length + 10) : date;
+    if (pull.draft && implementation?.finalizedHead === head && (!archive || activePresent || archive !== implementation.archive)) {
+      return blocked("draft-finalization-redraft-form");
+    }
+    const effectiveDate = archive ? archive.slice(ARCHIVE_ROOT.length, ARCHIVE_ROOT.length + 10) : date;
     let body = pull.body ?? "";
-    // Invariant: the tree, not the fence, says whether the head is finalized; a body edit may lag a finalization push.
-    body = replaceImplementationMetadata(body, archive
+    if (!plain) body = replaceImplementationMetadata(body, archive
       ? { version: 3, change, archive, acceptanceManifest: `${archive}acceptance.md` } : { version: 3, change });
-    const capabilities = archive ? await archiveCapabilities(checkout, archive) : [];
-    const scope = archivePaths(change, effectiveDate, capabilities);
-
+    const scope = plain ? null : archivePaths(change, effectiveDate, archive ? await archiveCapabilities(checkout, archive) : []);
     if (behind) {
       const mergeBase = await git(["merge-base", target, head]);
       if (!SHA.test(mergeBase)) throw archiveFailure("finalization-merge-base");
       if (archive) {
-        // Rationale: restoring the active form against the merge-base lets the target branch's spec bytes win the merge without conflict.
+        // Existing ready-PR refresh compatibility: restore before merging a changed canonical spec baseline.
         const baseline = await readCanonicalSpecs({ cwd: checkout, sha: mergeBase, env, gitImpl });
         for (const path of scope.specs) {
           const bytes = baseline.get(path);
@@ -254,65 +195,65 @@ export async function reconcileFinalization({ reader, publisher, number, toolRoo
       if (merged === null) { await git(["merge", "--abort"], { allowFailure: true }); throw archiveFailure("finalization-merge-conflict"); }
       commits.push({ kind: "merge", sha: await git(["rev-parse", "HEAD"]) });
     }
-
-    const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: target, env, gitImpl });
-    const result = await prepareSinglePrDelivery({ root: checkout, change, repository: reader.repository, sourcePr: number, body,
-      specBaseSha: target, date: effectiveDate, targetSpecs, write: true, toolRoot });
-    const refinalized = result.refinalized || commits.some(commit => commit.kind === "restore");
-    if (result.disposition !== "already-finalized") {
-      await git(["add", "-A", "--", "openspec"]);
-      await git([...identity, "commit", "--quiet", "-m", `docs(openspec): ${refinalized ? "refinalize" : "finalize"} ${change}`]);
-      commits.push({ kind: refinalized ? "refinalize" : "finalize", sha: await git(["rev-parse", "HEAD"]) });
+    let result = null;
+    let finalBody = body;
+    const refinalized = () => result?.refinalized || commits.some(commit => commit.kind === "restore");
+    if (!plain) {
+      const targetSpecs = await readCanonicalSpecs({ cwd: checkout, sha: target, env, gitImpl });
+      result = await prepareSinglePrDelivery({ root: checkout, change, repository: reader.repository, sourcePr: number, body,
+        specBaseSha: target, date: effectiveDate, targetSpecs, write: true, toolRoot });
+      if (result.disposition !== "already-finalized") {
+        await git(["add", "-A", "--", "openspec"]);
+        await git([...identity, "commit", "--quiet", "-m", `docs(openspec): ${refinalized() ? "refinalize" : "finalize"} ${change}`]);
+        commits.push({ kind: refinalized() ? "refinalize" : "finalize", sha: await git(["rev-parse", "HEAD"]) });
+      }
+      const metadata = parseImplementation(result.body);
+      if (!metadata?.archive || !metadata.acceptanceManifest) throw archiveFailure("delivery-not-finalized");
+      finalBody = replaceImplementationMetadata(result.body, { version: 3, change, archive: metadata.archive,
+        acceptanceManifest: metadata.acceptanceManifest, ...(approval ? { reviewedHead: approvedHead }
+          : implementation.reviewedHead ? { reviewedHead: implementation.reviewedHead } : {}), finalizedHead: commits.at(-1)?.sha ?? head });
     }
-    const prospectiveHead = commits.at(-1)?.sha ?? head;
-    const finalizedImplementation = parseImplementation(result.body);
-    if (finalizedImplementation?.version !== 3 || !finalizedImplementation.archive || !finalizedImplementation.acceptanceManifest) {
-      throw archiveFailure("delivery-not-finalized");
-    }
-    const finalBody = replaceImplementationMetadata(result.body, {
-      version: 3,
-      change,
-      archive: finalizedImplementation.archive,
-      acceptanceManifest: finalizedImplementation.acceptanceManifest,
-      finalizedHead: prospectiveHead,
-    });
-    if (!commits.length && finalBody === (pull.body ?? "")) {
-      return { disposition: "already-finalized", head, pushedHead: head, commits: [], bodyUpdated: false };
-    }
-
-    // Security: every commit this run pushes is either a merge of the exact target or a change confined to the change's paths.
-    const finalPaths = result.paths ?? scope;
+    // Every published commit is a clean base merge or confined to this change's archive paths.
     let previous = head;
     for (const commit of commits) {
       if (commit.kind === "merge") {
         const parents = (await git(["rev-list", "--parents", "-n", "1", commit.sha])).split(" ").slice(1);
-        if (parents.length !== 2 || parents[0] !== previous || parents[1] !== target) throw archiveFailure("finalization-push-scope", "merge");
-        const targetChanges = new Set((await git(["diff", "--name-only", `${await git(["merge-base", target, previous])}`, target])).split("\n").filter(Boolean));
-        const brought = (await git(["diff", "--name-only", previous, commit.sha])).split("\n").filter(Boolean);
-        const foreign = brought.find(path => !targetChanges.has(path));
-        if (foreign) throw archiveFailure("finalization-push-scope", foreign);
+        const tree = await git(["merge-tree", "--write-tree", previous, target], { allowFailure: true });
+        if (parents.length !== 2 || parents[0] !== previous || parents[1] !== target || !SHA.test(tree ?? "")
+          || tree !== await git(["rev-parse", `${commit.sha}^{tree}`])) throw archiveFailure("finalization-push-scope", "merge");
       } else {
         const files = (await git(["diff", "--name-only", "--no-renames", "-z", previous, commit.sha])).split("\0").filter(Boolean);
-        assertArchiveDiff(files.map(filename => ({ status: "modified", filename })), finalPaths);
+        assertArchiveDiff(files.map(filename => ({ status: "modified", filename })), result.paths ?? scope);
       }
       previous = commit.sha;
     }
-
+    const prospectiveHead = commits.at(-1)?.sha ?? head;
+    const retry = (reason, pushedHead = head, bodyUpdated = false) => ({ disposition: "retry", reason, head, approvedHead, pushedHead, commits, bodyUpdated });
+    const current = await reader.get(`${prefix}/pulls/${number}`);
+    if (!sameDeliverySnapshot(current, pull, reader.repository)) return retry("draft-changed-before-publication");
+    if ((await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`)).object?.sha !== target) return retry("draft-target-changed");
     let pushedHead = head;
     if (commits.length) {
       const pushed = await git(["push", "--quiet", `--force-with-lease=refs/heads/${branch}:${head}`, "origin", `HEAD:refs/heads/${branch}`], { allowFailure: true });
-      if (pushed === null) return { disposition: "retry", reason: "head-changed-before-push", head, pushedHead: head, commits, bodyUpdated: false };
-      pushedHead = commits.at(-1).sha;
+      if (pushed === null) return retry("head-changed-before-push");
+      pushedHead = prospectiveHead;
     }
     let bodyUpdated = false;
-    if (finalBody !== (pull.body ?? "")) {
+    if (finalBody !== pull.body) {
       const current = await reader.get(`${prefix}/pulls/${number}`);
-      if (current.body !== pull.body) return { disposition: "retry", reason: "body-changed-before-update", head, pushedHead, commits, bodyUpdated };
-      if (current.head?.sha !== pushedHead) return { disposition: "retry", reason: "head-changed-before-body-update", head, pushedHead, commits, bodyUpdated };
+      if (!sameDeliverySnapshot(current, pull, reader.repository, pushedHead)) return retry("snapshot-changed-before-body-update", pushedHead);
       await publisher.mutate(`${prefix}/pulls/${number}`, "PATCH", { body: finalBody });
       bodyUpdated = true;
     }
-    return { disposition: commits.length ? refinalized ? "refinalized" : "finalized" : "body-updated",
-      head, pushedHead, commits, bodyUpdated, archive: result.paths?.archive ?? result.implementation?.archive ?? null };
+    if (pull.draft) {
+      const current = await reader.get(`${prefix}/pulls/${number}`);
+      if (!sameDeliverySnapshot(current, pull, reader.repository, pushedHead, finalBody)) return retry("draft-changed-before-ready", pushedHead, bodyUpdated);
+      if ((await reader.get(`${prefix}/git/ref/heads/${targetBranch()}`)).object?.sha !== target) return retry("draft-target-changed", pushedHead, bodyUpdated);
+      await publisher.ready(number, pull.node_id);
+    }
+    return { disposition: pull.draft ? "promoted" : commits.length ? refinalized() ? "refinalized" : "finalized"
+      : bodyUpdated ? "body-updated" : "already-finalized", head, approvedHead: approval ? approvedHead : null,
+      reviewedHead: approval ? approvedHead : implementation?.reviewedHead ?? null, finalizedHead: pushedHead,
+      pushedHead, promoted: pull.draft, commits, bodyUpdated, archive: result?.paths?.archive ?? result?.implementation?.archive ?? null };
   } finally { await rm(root, { recursive: true, force: true }); }
 }

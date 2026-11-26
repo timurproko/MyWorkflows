@@ -58,7 +58,7 @@ const fail = (reason, detail) => ({ outcome: "fail", reason, ...(detail ? { deta
 const codeOf = error => typeof error?.archiveCode === "string" ? error.archiveCode : "metadata-invalid";
 
 const EXPLANATION = {
-  draft: "The pull request is still a draft. It becomes ready once every Implementation item is ticked.",
+  draft: "The pull request is still a draft. Completed outcomes wait for an approved-head dispatch; the bot finalizes on the draft before marking it ready.",
   "awaiting-finalization": "This head still holds the active change. The delivery bot finalizes ready pull requests and pushes the finalized head, which receives its own check.",
   unlinked: "The pull request links no OpenSpec change and adds no active change, so nothing needs finalizing.",
   finalized: "The linked change is archived and its specifications are synchronized at this exact head.",

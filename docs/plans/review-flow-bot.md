@@ -1,6 +1,6 @@
 # Approval-bound delivery before CI
 
-Status: proposed; implementation awaits approval of the draft PR.
+Status: approved for implementation; outcomes tracked below.
 
 ## Scope and decisions
 
@@ -11,6 +11,8 @@ This repository has no `openspec/` directory. This committed plan and its draft 
 ## Implementation outcomes
 
 ### 1. Approval-bound dispatch finalizes completed drafts before promoting them
+
+Status: implemented; 72 focused publication, approval, plain-delivery, gate, CLI and workflow tests pass.
 
 - Stop promoting both linked and plain drafts merely because every Implementation outcome is checked. Ordinary delivery events leave completed drafts waiting for approval, without manufacturing a failure for the expected waiting state. No repository opt-in variable is introduced.
 - Add `approved_head` to the reusable workflow inputs, the external `templates/delivery-caller.yml` workflow-dispatch inputs and the self-caller. Thread it through the trusted publication entrypoint; accept approval only from an explicit `workflow_dispatch`, never from PR body text, labels or an ordinary event.
