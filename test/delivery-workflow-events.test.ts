@@ -155,12 +155,12 @@ describe("label-only delivery events", () => {
     expect(await load(".github/protection.json")).not.toContain("Reconcile managed review labels (advisory)");
   });
 
-  it("reconciles only open additions, not closure, merges, dispatch, or other PR actions", async () => {
+  it("reconciles additions on open and closed PRs, never other events or PR actions", async () => {
     const section = job(await load(labelsPath), "review-label-reconciliation");
     for (const action of ["opened", "synchronize", "closed", "reopened", "edited", "unlabeled"]) expect(enabled(section, action)).toBe(false);
     for (const eventName of ["workflow_dispatch", "workflow_run", "label", "push"]) expect(enabled(section, "labeled", eventName)).toBe(false);
     for (const pull of [{ state: "closed", merged: false }, { state: "closed", merged: true }, { state: "open", merged: true }]) {
-      expect(enabled(section, "labeled", "pull_request_target", { event: { action: "labeled", pull_request: pull } })).toBe(false);
+      expect(enabled(section, "labeled", "pull_request_target", { event: { action: "labeled", pull_request: pull } })).toBe(true);
     }
   });
 

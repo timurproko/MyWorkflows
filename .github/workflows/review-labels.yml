@@ -26,8 +26,7 @@ jobs:
     # Editable current/historical managed names are resolved in trusted tooling, not YAML.
     if: >-
       (github.event_name == 'pull_request_target' || github.event_name == 'pull_request')
-      && github.event.action == 'labeled' && github.event.pull_request.state == 'open'
-      && github.event.pull_request.merged != true
+      && github.event.action == 'labeled'
     continue-on-error: true
     permissions:
       contents: read

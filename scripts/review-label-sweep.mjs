@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { labelApi, loadBaseLabels, validateRepository } from "./repository-labels.mjs";
 import { cleanupClosedReviewLabels, managedReviewNames } from "./review-label-cleanup.mjs";
 
-/** Explicit, single-repository historical recovery. No automatic workflow imports this module. */
+/** Explicit, single-repository historical recovery. Only manual CLI/dispatch paths invoke it. */
 export async function sweepReviewLabels({ repository, apply = false, api = labelApi, manifest, environment = process.env }) {
   validateRepository(repository);
   if (apply && environment.DELIVERY_LABELS_ENABLED?.toLowerCase() === "false") {

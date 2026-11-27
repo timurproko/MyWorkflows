@@ -84,13 +84,13 @@ describe("closed-PR advisory review-label cleanup", () => {
     { verdicts: ["🤖 Rework"] },
     { verdicts: ["🤖 Changes needed"] },
     { verdicts: ["🤖 Approved", "🤖 Rework", "🤖 Changes needed"] },
-  ])("clears transient assignments and retains Approved from $verdicts on every closure path", async ({ verdicts }) => {
+  ])("clears all managed assignments from $verdicts on every closure path", async ({ verdicts }) => {
     for (const merged of [true, false]) {
       for (const underReview of [true, false]) {
         for (const automated of [true, false]) {
           const initial = [...(underReview ? [name] : []), ...verdicts];
-          const removed = initial.filter(label => label !== "🤖 Approved");
-          const retained = [...initial.filter(label => label === "🤖 Approved"), "keep-me"];
+          const removed = initial;
+          const retained = ["keep-me"];
           const { api, applied } = fake({ labels: [...initial, "keep-me"] });
           const cleanup = () => automated
             ? runLabelAutomation({ environment: environment({ DELIVERY_LABELS_ENABLED: undefined }), event: event(merged), api, report: vi.fn() })
@@ -108,17 +108,17 @@ describe("closed-PR advisory review-label cleanup", () => {
     }
   });
 
-  it.each([[oldName], [name, oldName]])("clears current and legacy Build/Review names but retains Approved", async (...reviewNames) => {
+  it.each([[oldName], [name, oldName]])("clears current and legacy names of all three roles", async (...reviewNames) => {
     const verdicts = ["🤖 Approved", "🤖 Build", "🤖 Rework", "🤖 Changes needed"];
     for (const merged of [true, false]) {
       const { api, applied } = fake({ labels: [...reviewNames, ...verdicts] });
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("removed");
-      expect(applied).toEqual(["🤖 Approved"]);
+      expect(applied).toEqual([]);
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe("absent");
     }
   });
 
-  it("retains future Approved names and aliases while clearing both transient roles", async () => {
+  it("clears future names and aliases of every managed role", async () => {
     const reviewNames = ["Reading", "Earlier reading", "Oldest reading"];
     const verdicts = ["Good", "Previously good", "Revise", "Previously revise"];
     const manifest = { version: 1, labels: {
@@ -127,10 +127,10 @@ describe("closed-PR advisory review-label cleanup", () => {
       "review-changes-needed": { name: verdicts[2], previousNames: [verdicts[3]], color: "9a6700", description: "" },
     } };
     for (const merged of [true, false]) {
-      const removed = [...reviewNames, ...verdicts.slice(2)];
+      const removed = [...reviewNames, ...verdicts];
       const { api, applied } = fake({ labels: [...reviewNames, ...verdicts, "other"], removableNames: removed });
       expect((await cleanupReviewLabel({ repository, event: event(merged), api, manifest })).disposition).toBe("removed");
-      expect(applied).toEqual(["Good", "Previously good", "other"]);
+      expect(applied).toEqual(["other"]);
       expect((await cleanupReviewLabel({ repository, event: event(merged), api, manifest })).disposition).toBe("absent");
       expect(api.mock.calls.filter(([method]) => method === "DELETE")).toHaveLength(removed.length);
     }
@@ -175,13 +175,13 @@ describe("closed-PR advisory review-label cleanup", () => {
         return source.api(method, path);
       });
       expect((await cleanupReviewLabel({ repository, event: event(merged), api })).disposition).toBe(reopened ? "reopened" : "removed");
-      expect(source.applied).toEqual(reopened ? [name, "🤖 Approved", "🤖 Rework"] : ["🤖 Approved"]);
+      expect(source.applied).toEqual(reopened ? [name, "🤖 Approved", "🤖 Rework"] : []);
       expect(api.mock.calls.filter(([method]) => method === "DELETE").map(([, path]) => decodeURIComponent(path.split("/").at(-1)!)))
-        .toEqual(reopened ? [oldName] : [oldName, "🤖 Rework", name]);
+        .toEqual(reopened ? [oldName] : [oldName, "🤖 Approved", "🤖 Rework", name]);
     }
   });
 
-  it.each(["under-review", "review-changes-needed"])("retains rename, reopen, 404 and churn safeguards for transient role %s", async key => {
+  it.each(["under-review", "review-approved", "review-changes-needed"])("retains rename, reopen, 404 and churn safeguards for role %s", async key => {
     const manifest = structuredClone(definitions);
     manifest.labels[key].previousNames = ["Earlier role name"];
     const current = manifest.labels[key].name;

@@ -4,6 +4,10 @@ import { pathToFileURL } from "node:url";
 import { labelApi, syncLabels, validateRepository } from "./repository-labels.mjs";
 import { cleanupReviewLabel } from "./review-label-cleanup.mjs";
 import { reconcileReviewLabels } from "./review-label-reconciliation.mjs";
+import { sweepReviewLabels } from "./review-label-sweep.mjs";
+
+// JSON plus Markdown/HTML escaping keeps arbitrary UI names inert in logs and summaries.
+const data = value => JSON.stringify(value).replace(/[<>&`*_[\]#!|]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
 
 export async function runLabelAutomation({ environment = process.env, api = labelApi, report = console.log, event, manifest } = {}) {
   const operation = environment.LABELS_OPERATION ?? "sync";
@@ -12,11 +16,14 @@ export async function runLabelAutomation({ environment = process.env, api = labe
     && !(operation === "reconcile" && prEvent)) {
     throw new Error("label automation requires a trusted delivery event");
   }
-  if (!["sync", "cleanup", "reconcile"].includes(operation) || (operation === "cleanup" && environment.GITHUB_EVENT_NAME !== "pull_request_target")
-    || (operation === "reconcile" && !prEvent)) {
+  if (!["sync", "cleanup", "reconcile", "sweep"].includes(operation) || (operation === "cleanup" && environment.GITHUB_EVENT_NAME !== "pull_request_target")
+    || (operation === "reconcile" && !prEvent)
+    || (operation === "sweep" && environment.GITHUB_EVENT_NAME !== "workflow_dispatch")) {
     throw new Error("invalid internal label operation for this event");
   }
-  const dryRun = operation === "sync" && environment.GITHUB_EVENT_NAME === "workflow_dispatch" && environment.LABELS_DRY_RUN === "true";
+  const dryRun = environment.GITHUB_EVENT_NAME === "workflow_dispatch" && (
+    operation === "sync" && environment.LABELS_DRY_RUN === "true"
+    || operation === "sweep" && environment.LABELS_SWEEP_APPLY !== "true");
   // Match Actions' case-insensitive string comparison; do not trim whitespace.
   if (environment.DELIVERY_LABELS_ENABLED?.toLowerCase() === "false" && !dryRun) {
     report("Delivery labels are disabled by explicit DELIVERY_LABELS_ENABLED=false opt-out. Nothing was changed.");
@@ -25,6 +32,14 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   const repository = validateRepository(environment.GITHUB_REPOSITORY);
   if (!dryRun && (!environment.LABELS_APP_TOKEN || environment.GH_TOKEN !== environment.LABELS_APP_TOKEN)) {
     throw new Error("label writes require the separate delivery App token with Pull requests write");
+  }
+  if (operation === "sweep") {
+    const result = await sweepReviewLabels({ repository, api, manifest, apply: !dryRun, environment });
+    report(`Managed review-label closed-PR sweep (${dryRun ? "report only" : "apply"}): ${result.pulls.length} pull requests inspected.`);
+    for (const pull of result.pulls) {
+      report(`PR #${pull.number}: ${pull.disposition}${pull.names ? ` ${data(pull.names)}` : ""}.`);
+    }
+    return result;
   }
   if (operation === "reconcile") {
     event ??= JSON.parse(await readFile(environment.GITHUB_EVENT_PATH, "utf8"));
@@ -41,8 +56,6 @@ export async function runLabelAutomation({ environment = process.env, api = labe
   const result = await syncLabels({ repository, apply: !dryRun, api, manifest });
   // Names/descriptions from the API are data, not workflow commands or summary markup.
   report(`Base labels ${dryRun ? "report" : "sync"}: ${result.labels.filter(label => label.action === "create").length} create, ${result.labels.filter(label => label.action === "update").length} update, ${result.labels.filter(label => label.action === "rename").length} rename, ${result.preserved.length} unmanaged labels preserved. No labels deleted.`);
-  // JSON escaping plus Markdown/HTML escaping keeps arbitrary UI names inert in logs and summaries.
-  const data = value => JSON.stringify(value).replace(/[<>&`*_[\]#!|]/g, char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
   for (const label of result.labels.filter(label => label.action === "rename")) {
     report(`Managed label ${label.key}: ${dryRun ? "planned rename" : "renamed"} ${data(label.previousName)} to ${data(label.name)}.`);
   }

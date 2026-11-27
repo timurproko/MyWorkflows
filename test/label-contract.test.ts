@@ -53,12 +53,12 @@ describe("stable reference-driven label and runner contract", () => {
     expect(docs).toContain("historical PRs");
     expect(docs).toContain("DELETE /repos/{owner}/{repo}/issues/{pr}/labels/{URL-encoded-resolved-name}");
   });
-  it("publishes transient-stage cleanup, Approved retention and separately authorized historical recovery", async () => {
+  it("publishes all-role closure cleanup and separately authorized historical recovery", async () => {
     for (const path of guidance) {
       const text = (await file(path)).replace(/\s+/g, " ");
-      expect(text).toContain("Closed/merged cleanup removes Build and Review");
-      expect(text).toContain("current/historical assignments; Approved stays as the record");
-      expect(text).toContain("including its aliases");
+      expect(text).toContain("Closed/merged cleanup removes all three managed roles'");
+      expect(text).toContain("current/historical assignments, including Approved and its aliases");
+      expect(text).not.toContain("Approved stays as the record");
       expect(text).toContain("the review approved that commit and CI is green on that same commit");
       expect(text).not.toContain("without waiting for CI");
       expect(text).toContain("until the next review sets one");
@@ -71,7 +71,7 @@ describe("stable reference-driven label and runner contract", () => {
       expect(text).not.toMatch(/clears only `under-review`|removes only `under-review`|preserves both verdict keys|both verdict keys' current\/historical assignments survive/);
     }
     const docs = await file("docs/delivery-labels.md");
-    for (const term of ["explicit manual", "No verdict is added", "no definition is deleted", "before **each** removal", "both transient roles' current/historical names", "not a frozen repository transaction", "earlier PRs may already have been cleaned", "final state read and DELETE", "not fetched by this local command"]) {
+    for (const term of ["explicit manual", "No verdict is added", "no definition is deleted", "before **each** removal", "all three roles' current/historical names", "not a frozen repository transaction", "earlier PRs may already have been cleaned", "final state read and DELETE", "not fetched by this local command"]) {
       expect(docs.toLowerCase()).toContain(term.toLowerCase());
     }
     expect(docs).not.toContain("including both verdicts");
@@ -82,7 +82,9 @@ describe("stable reference-driven label and runner contract", () => {
       expect(historical).toContain("current runner contract");
     }
     for (const name of await readdir(".github/workflows")) {
-      expect(await file(`.github/workflows/${name}`)).not.toMatch(/labels-sweep|review-label-sweep/);
+      if (!["review-label-sweep.yml", "self-review-label-sweep.yml"].includes(name)) {
+        expect(await file(`.github/workflows/${name}`)).not.toMatch(/labels-sweep|review-label-sweep/);
+      }
     }
     expect(await file("templates/delivery-caller.yml")).not.toMatch(/labels-sweep|review-label-sweep/);
   });

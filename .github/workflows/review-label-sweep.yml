@@ -1,0 +1,63 @@
+name: Sweep closed pull request review labels
+
+# Manual-only historical recovery, isolated from delivery and required checks.
+on:
+  workflow_call:
+    inputs:
+      apply:
+        description: Remove managed assignments; false reports only
+        type: boolean
+        default: false
+      tools_ref:
+        description: Ref of timurproko/MyWorkflows tooling; keep equal to the caller's uses ref
+        type: string
+        default: main
+    secrets:
+      app_id:
+        required: true
+      app_private_key:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: Sweep closed pull request review labels (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: delivery-review-label-sweep-${{ github.repository }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Check out trusted label tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: timurproko/MyWorkflows
+          ref: ${{ inputs.tools_ref }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Mint a separate sweep App token only for explicit apply
+        id: sweep-app
+        if: inputs.apply && vars.DELIVERY_LABELS_ENABLED != 'false'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ secrets.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+          permission-pull-requests: write
+      - name: Report or remove only managed assignments on closed pull requests
+        env:
+          GH_TOKEN: ${{ steps.sweep-app.outputs.token || github.token }}
+          LABELS_APP_TOKEN: ${{ steps.sweep-app.outputs.token }}
+          DELIVERY_LABELS_ENABLED: ${{ vars.DELIVERY_LABELS_ENABLED }}
+          LABELS_OPERATION: sweep
+          LABELS_SWEEP_APPLY: ${{ inputs.apply }}
+        run: node scripts/run-label-automation.mjs

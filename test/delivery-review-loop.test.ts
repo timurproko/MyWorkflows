@@ -33,7 +33,8 @@ describe("bounded delivery review loop", () => {
     for (const path of ["README.md", "docs/delivery-labels.md", "skills/change-delivery/SKILL.md"]) {
       const guidance = await text(path);
       expect(guidance).toContain("the review approved that commit and CI is green on that same commit");
-      expect(guidance).toContain("Approved stays as the record");
+      expect(guidance).toContain("Closed/merged cleanup removes all three managed roles' current/historical assignments, including Approved and its aliases");
+      expect(guidance).not.toContain("Approved stays as the record");
       expect(guidance).not.toMatch(/without waiting for CI|approved_head|reviewedHead|delivery-approval\.md/);
     }
   });
