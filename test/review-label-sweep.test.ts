@@ -8,11 +8,10 @@ import { sweepMain, sweepReviewLabels } from "../scripts/review-label-sweep.mjs"
 const repository = "owner/.repo.name";
 const manifest = { version: 1, labels: Object.fromEntries(Object.entries(bootstrap.labels).map(([key, label], index) =>
   [key, { ...label, name: `Role ${index}`, previousNames: [`Previous ${index}`, `Oldest ${index}`] }])) };
-const managed = [manifest.labels["under-review"], manifest.labels["review-changes-needed"]].flatMap(label => [label.name, ...label.previousNames]);
-const approved = [manifest.labels["review-approved"].name, ...manifest.labels["review-approved"].previousNames];
+const managed = Object.values(manifest.labels).flatMap(label => [label.name, ...label.previousNames]);
 const pull = (number, state = "closed") => ({ number, state, base: { repo: { full_name: repository } } });
 
-function fake({ pulls = [pull(1), pull(2)], labels = new Map(pulls.map(pr => [pr.number, [...managed, ...approved, "unrelated"]])),
+function fake({ pulls = [pull(1), pull(2)], labels = new Map(pulls.map(pr => [pr.number, [...managed, "unrelated"]])),
   states = new Map(), deleteStatus = 0, confirm404 = true } = {}) {
   const reads = new Map();
   const api = vi.fn(async (method, path) => {
@@ -58,16 +57,16 @@ describe("explicit historical review-label sweep", () => {
     expect(await sweep({ api: source.api })).toEqual({ repository, applied: false,
       pulls: [1, 2].map(number => ({ number, disposition: "would-remove", names: managed })) });
     expect(source.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
-    expect(source.labels.get(1)).toEqual([...managed, ...approved, "unrelated"]);
+    expect(source.labels.get(1)).toEqual([...managed, "unrelated"]);
   });
 
-  it("explicit apply removes Build/Review aliases, retaining Approved and confirming transient absence", async () => {
+  it("explicit apply removes all three roles and their aliases, confirming absence idempotently", async () => {
     const source = fake();
     expect(await sweep({ api: source.api, apply: true })).toEqual({ repository, applied: true,
       pulls: [1, 2].map(number => ({ number, disposition: "removed" })) });
     expect(await sweep({ api: source.api, apply: true })).toEqual({ repository, applied: true,
       pulls: [1, 2].map(number => ({ number, disposition: "absent" })) });
-    expect([...source.labels.values()]).toEqual([[...approved, "unrelated"], [...approved, "unrelated"]]);
+    expect([...source.labels.values()]).toEqual([["unrelated"], ["unrelated"]]);
     expect(source.api.mock.calls.filter(([method]) => method !== "GET")).toHaveLength(managed.length * 2);
     expect(source.api.mock.calls.every(([method, path]) => method === "GET" || (method === "DELETE" && path.includes("/issues/") && path.includes("/labels/")))).toBe(true);
   });
@@ -97,8 +96,8 @@ describe("explicit historical review-label sweep", () => {
     const source = fake({ states: new Map([[1, ["closed", "closed", "open"]]]) });
     const result = await sweep({ api: source.api, apply: true });
     expect(result.pulls[0].disposition).toBe("reopened");
-    expect(source.labels.get(1)).toEqual([...managed.slice(1), ...approved, "unrelated"]);
-    expect(source.labels.get(2)).toEqual([...approved, "unrelated"]);
+    expect(source.labels.get(1)).toEqual([...managed.slice(1), "unrelated"]);
+    expect(source.labels.get(2)).toEqual(["unrelated"]);
   });
 
   it.each(["false", "FALSE", "False"])("opts apply out before requests but permits read-only reports: %s", async value => {
@@ -168,13 +167,13 @@ describe("explicit historical review-label sweep", () => {
     const malformed = fake();
     const api = vi.fn((method, path) => path.includes("/issues/2/labels?") ? null : malformed.api(method, path));
     await expect(sweep({ api, apply: true })).rejects.toThrow("failed on PR #2");
-    expect(malformed.labels.get(1)).toEqual([...approved, "unrelated"]);
+    expect(malformed.labels.get(1)).toEqual(["unrelated"]);
   });
 
   it("shares default-read-only core and reads the published palette without hard-coded names", async () => {
     const source = fake();
     const current = await loadBaseLabels();
-    const names = [current.labels["under-review"], current.labels["review-changes-needed"]].flatMap(label => [label.name, ...label.previousNames]);
+    const names = Object.values(current.labels).flatMap(label => [label.name, ...label.previousNames]);
     source.labels.set(1, [...names, "other"]);
     expect(await cleanupClosedReviewLabels({ repository, number: 1, api: source.api })).toEqual({ number: 1, disposition: "would-remove", names });
     expect(source.api.mock.calls.every(([method]) => method === "GET")).toBe(true);
@@ -185,6 +184,6 @@ describe("explicit historical review-label sweep", () => {
     const workflow = await readFile(".github/workflows/delivery.yml", "utf8");
     expect(workflow).not.toMatch(/labels-sweep|review-label-sweep/);
     const automation = await readFile("scripts/run-label-automation.mjs", "utf8");
-    expect(automation).not.toMatch(/sweep/);
+    expect(automation).toContain('operation === "sweep" && environment.GITHUB_EVENT_NAME !== "workflow_dispatch"');
   });
 });

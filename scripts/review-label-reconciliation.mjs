@@ -1,5 +1,5 @@
 import { labelApi, loadBaseLabels, validateRepository } from "./repository-labels.mjs";
-import { managedReviewNames } from "./review-label-cleanup.mjs";
+import { cleanupClosedReviewLabels, managedReviewNames } from "./review-label-cleanup.mjs";
 
 const later = (a, b) => a.time - b.time || a.id - b.id;
 
@@ -42,11 +42,16 @@ export async function reconcileReviewLabels({ repository, event, api = labelApi,
     || !["open", "closed"].includes(event.pull_request.state)) {
     throw new Error("review-label reconciliation requires a matching labeled pull-request event");
   }
-  if (event.pull_request.state !== "open" || event.pull_request.merged === true) return { number, disposition: "closed" };
   manifest ??= await loadBaseLabels();
-  // Open-PR exclusivity includes the Approved record; closure cleanup intentionally does not.
   const names = managedReviewNames(manifest);
   if (!names.includes(event.label.name)) return { number, disposition: "unmanaged" };
+  // A queued open event or late external writer can arrive after close cleanup.
+  // Re-read live state in the shared core; never remove a reopened PR's new review.
+  async function closed() {
+    const result = await cleanupClosedReviewLabels({ repository, number, api, manifest, apply: true });
+    return { number, disposition: "closed", cleanup: result.disposition };
+  }
+  if (event.pull_request.state !== "open" || event.pull_request.merged === true) return closed();
   const prefix = `repos/${repository}`;
   async function open() {
     const pull = await api("GET", `${prefix}/pulls/${number}`);
@@ -84,10 +89,10 @@ export async function reconcileReviewLabels({ repository, event, api = labelApi,
   // Actions concurrency; bound churn and leave an honest warning rather than false success.
   for (let pass = 0; pass < names.length * 3 + 3; pass++) {
     const before = await snapshot();
-    if (!before) return { number, disposition: "closed" };
+    if (!before) return closed();
     if (before.assigned.length < 2) return { number, disposition: removed ? "reconciled" : "unchanged", kept: before.assigned[0] ?? null };
     const current = await snapshot();
-    if (!current) return { number, disposition: "closed" };
+    if (!current) return closed();
     if (JSON.stringify(before) !== JSON.stringify(current)) continue;
     const name = current.assigned.find(name => name !== current.winner.name);
     // No endpoint supports an atomic delete-if-open-and-still-latest operation.
@@ -99,7 +104,7 @@ export async function reconcileReviewLabels({ repository, event, api = labelApi,
       // A 404 can hide denied access. Confirm PR access AND exact assignment absence.
       const stillOpen = await open();
       if ((await assignments()).includes(name)) throw error;
-      if (!stillOpen) return { number, disposition: "closed" };
+      if (!stillOpen) return closed();
     }
   }
   throw new Error("review assignments kept changing during reconciliation; retry");

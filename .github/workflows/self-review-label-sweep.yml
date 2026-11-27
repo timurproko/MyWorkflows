@@ -1,0 +1,22 @@
+name: Sweep closed pull request review labels (this repository)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Remove managed review assignments from closed PRs (requires authorization)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  sweep:
+    uses: ./.github/workflows/review-label-sweep.yml
+    with:
+      apply: ${{ inputs.apply }}
+    secrets:
+      app_id: ${{ vars.DELIVERY_BOT_APP_ID }}
+      app_private_key: ${{ secrets.DELIVERY_BOT_PRIVATE_KEY }}

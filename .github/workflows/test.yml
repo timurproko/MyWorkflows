@@ -1,9 +1,9 @@
 name: Test
 
+# Published branch heads need test evidence even before a pull request exists.
 on:
   pull_request:
   push:
-    branches: [main]
 
 permissions:
   contents: read

@@ -7,10 +7,9 @@ export function managedReviewNames(manifest) {
   return keys.flatMap(key => labelNames(manifest.labels[key]));
 }
 
-/** Closure clears transient Build/Review stages, not the Approved record (including its aliases). */
+/** No managed review stage or verdict belongs on a closed pull request. */
 export function closedReviewNames(manifest) {
-  managedReviewNames(manifest); // Still require and validate all three stable roles.
-  return ["under-review", "review-changes-needed"].flatMap(key => labelNames(manifest.labels[key]));
+  return managedReviewNames(manifest);
 }
 
 /** Event-only final fallback. Normal review lifetime is owned by the signed-in review runner. */
@@ -58,7 +57,7 @@ export async function cleanupClosedReviewLabels({ repository, number, api = labe
   }
   let removed = false;
   // Sync can rename an assigned definition while this independent job is removing it.
-  // Rescan both transient roles after removals/404s, not just the now-missing old spelling.
+  // Rescan all three roles after removals/404s, not just the now-missing old spelling.
   for (let pass = 0; pass <= names.length; pass++) {
     const assigned = await assignedReviewNames();
     if (!assigned.length) return { number, disposition: await currentState() === "open" ? "reopened" : removed ? "removed" : "absent" };

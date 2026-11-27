@@ -105,7 +105,7 @@ See [GitHub's concurrency semantics](https://docs.github.com/en/actions/how-tos/
 
 Review-label **assignments** do not change source, implementation bodies, readiness or label definitions.
 Only the advisory `review-label-reconciliation` job in its own reusable `.github/workflows/review-labels.yml`
-runs on open label additions. Its separate caller subscribes to `pull_request_target: [labeled]`. Delivery and test
+runs on label additions, including closed PRs. Its separate caller subscribes to `pull_request_target: [labeled]`. Delivery and test
 callers do not subscribe to either assignment action. Job guards in delivery are defensive only: **skipped required
 checks satisfy GitHub protection**, so calling the delivery workflow and skipping its jobs is not isolation.
 The label workflow never contains or calls delivery/test jobs, and publishes only the distinctly named non-required
@@ -184,7 +184,8 @@ cancel tests. Historical cancelled checks are not rewritten or rerun by this cha
 For each managed addition, resolve `under-review`, `review-approved` and `review-changes-needed` from one validated
 manifest, including every `previousNames` alias. Bot and person additions use the same policy. Validate event/PR
 identity, read current open state and paginate current assignments rather than trusting webhook labels. Ignore
-unmanaged additions; closed/merged PRs are no-ops owned by clear-on-close cleanup.
+unmanaged additions. Closed/merged PRs delegate to the shared all-role clear-on-close cleanup: an old queued
+open event or a new managed addition after closure removes every managed name, never restores one.
 
 When multiple managed names remain, paginate `GET /repos/{owner}/{repo}/issues/{pr}/events`. For each currently
 assigned managed name, find its latest exact-name `labeled` event. The assigned name with the latest `created_at`
@@ -202,7 +203,9 @@ one run to converge to a single survivor; re-runs are idempotent. Never replace 
 
 The dedicated per-repository/PR `delivery-review-label-reconciliation` concurrency group uses `queue: max` and
 `cancel-in-progress: false`. Jobs serialize, but ordering remains independent of execution order because each
-reads fresh history. Before each individual deletion the script twice reads current assignments, latest history
+reads fresh history. The closed-event cleanup shares this exact queue and uses `queue: max` too.
+The workflow must not filter out closed webhook PRs: a late label addition needs cleanup even after the close job.
+Before each individual deletion the script twice reads current assignments, latest history
 and open state, retries changed snapshots within a bound, and rescans after writes. DELETE 404s require confirmed
 PR access and exact assignment absence. Missing App rights, malformed history, multiple missing additions, denied reads or bounded
 churn produce visible advisory warnings/summaries; required delivery jobs are independent. The existing opt-out
@@ -220,8 +223,8 @@ closed-event job still owns closures; no stale verdict or review label is automa
 There are exactly three managed labels: Build, Review and Approved. Build means building/fixing, including one
 combined fix round for CI failures and blocking review findings. Review is the review stage, including waiting
 for CI after review approval. Approved means the review approved that commit and CI is green on that same commit;
-review approval alone or green checks on an earlier head are not enough. Closed Approved remains a historical
-record, not approval of new commits.
+review approval alone or green checks on an earlier head are not enough. No managed label remains after closure;
+the review and check history, not a retained label, records approval.
 
 Keep one concern per pull request. Make the change, run only the tests for what you touched, push and report
 immediately: CI and the review start together. No full local test suite is required of workers or reviewers.
@@ -250,25 +253,52 @@ Crew's separately implemented transport makes exactly one contents API read with
 - Failed launch/report, stop, finish, observed death or abandonment clears current/historical in-progress names without inventing a verdict. Complete old cleanup before replacement; retain one owner per PR or wait for that owner's last local reviewer to finish. Plain labels cannot coordinate overlapping independent controllers.
 - Use ordinary `POST /repos/{owner}/{repo}/issues/{pr}/labels` with `{"labels":["<resolved current name>"]}` and `DELETE /repos/{owner}/{repo}/issues/{pr}/labels/{URL-encoded-resolved-name}`. Do not replace the whole label set or delete repository definitions. Repeated add is harmless; confirm access and absence before treating a remove-label 404 as success. Warn on permissions/API failures and use existing recovery.
 
-Closed/merged cleanup removes Build and Review current/historical assignments; Approved stays as the record, including its aliases. A reopened PR keeps that record until the next review sets one; removed assignments are not restored. Unrelated labels remain untouched. This policy supersedes the earlier all-verdicts clear-on-close contract; retained Approved is historical evidence, not approval of later commits.
+Closed/merged cleanup removes all three managed roles' current/historical assignments, including Approved and its aliases. A reopened PR waits until the next review sets one; removed assignments are not restored. Unrelated labels remain untouched. This supersedes the earlier Approved-retention policy.
 
 All three labels are **advisory**, never required checks, readiness conditions or merge gates; absence is not approval. A retained verdict is not a promise that later commits were reviewed. No lease, heartbeat, state comment, timer, supervisor or cross-controller lock is added. There is **no time-based crash-expiry guarantee**: a lost machine can leave an open PR labeled until recovery or a person clears it.
 
 ## Closed-event fallback
 
-The already forwarded `pull_request_target: closed` event validates all three stable roles from one manifest snapshot, then clears the two transient roles `under-review` (Review) and `review-changes-needed` (Build) current names and `previousNames` assignments on merged **and** unmerged closures. `review-approved` (Approved), including its historical aliases, remains as the record even if unexpectedly present alongside another stage. Unrelated labels survive. No verdict is added and no definition is deleted.
+The already forwarded `pull_request_target: closed` event validates all three stable roles from one manifest snapshot, then clears `under-review` (Review), `review-approved` (Approved) and `review-changes-needed` (Build) current names and `previousNames` assignments on merged **and** unmerged closures. Unrelated labels survive. No verdict is added and no definition is deleted.
 
-Cleanup validates repository/event/PR identity and current closure state, paginates assignments, and checks for reopen before **each** removal. After removals or a DELETE 404, cleanup rescans both transient roles' current/historical names so a concurrent definition rename cannot masquerade as assignment absence. A DELETE 404 succeeds only after confirming access and that exact assignment's absence; continued assignment churn fails visibly rather than reporting success. A final-read/reopen race cannot be made atomic. Opt-out, missed events and failed APIs can prevent cleanup; warnings do not hide these limits. The event handler does not sweep historical PRs or replay herdr-app #14's old closure. Use the explicit manual recovery below for older closed PRs.
+Diagnosis: xrbuild #60's close run [45916017223](https://github.com/timurproko/xrbuild/actions/runs/45916017223) executed cleanup successfully; the previous code deliberately retained Approved. Its issue events show Approved added before the maintainer's merge, not re-added by reconciliation. Non-close delivery events legitimately skip this close-only job. The caller already forwards `closed`, App token creation succeeded, and no permission or bot-merge failure explains this example. A merge made with `GITHUB_TOKEN` may suppress `closed` entirely: that merging automation must use an event-producing App identity or explicitly invoke cleanup. A skipped non-close job cannot recover an event GitHub never emitted.
+
+Cleanup validates repository/event/PR identity and current closure state, paginates assignments, and checks for reopen before **each** removal. After removals or a DELETE 404, cleanup rescans all three roles' current/historical names so a concurrent definition rename cannot masquerade as assignment absence. A DELETE 404 succeeds only after confirming access and that exact assignment's absence; continued assignment churn fails visibly rather than reporting success. A final-read/reopen race cannot be made atomic. Opt-out, missed events and failed APIs can prevent cleanup; warnings do not hide these limits. The event handler does not sweep historical PRs or replay herdr-app #14's old closure. Use the explicit manual recovery below for older closed PRs.
 
 ## Explicit manual closed-PR sweep
 
-`delivery labels-sweep --repo owner/name` reports only Build/Review managed assignments on already-closed/merged pull requests in exactly one repository, **read-only by default**. Inspect the PR numbers and exact names in a fresh report, then obtain separate named-repository authorization before running `delivery labels-sweep --repo owner/name --apply`. Both `--repo owner/name` and `--repo=owner/name` work. There is no automatic invocation, schedule, dispatch or post-merge backfill, and implementation approval is not authorization to apply it. Do not run either mode as part of implementing this change.
+`delivery labels-sweep --repo owner/name` reports all three roles' managed assignments on already-closed/merged pull requests in exactly one repository, **read-only by default**. Inspect the PR numbers and exact names in a fresh report, then obtain separate named-repository authorization before running `delivery labels-sweep --repo owner/name --apply`. Both `--repo owner/name` and `--repo=owner/name` work. There is no automatic invocation, schedule or post-merge backfill, and implementation approval is not authorization to apply it. Do not run either mode as part of implementing this change.
 
-The command uses the normal signed-in `gh` credential or `GH_TOKEN`, never the delivery App private key or a newly minted App token. It reads one local published manifest snapshot from the installed tooling, validates all three stable keys, and resolves only Build/Review current names and `previousNames`, preserving Approved and its aliases; update the tooling first if its palette is stale. Report mode remains read-only even when opted out. For local apply, an environment value `DELIVERY_LABELS_ENABLED=false` disables writes (case-insensitive, no trimming); the calling repository's variable continues to gate the automatic jobs and is not fetched by this local command. Separate authorization is required regardless of opt-out settings.
+The command uses the normal signed-in `gh` credential or `GH_TOKEN`, never the delivery App private key or a newly minted App token. It reads one local published manifest snapshot from the installed tooling, validates all three stable keys, and resolves all three roles' current names and `previousNames`, including Approved and its aliases; update the tooling first if its palette is stale. Report mode remains read-only even when opted out. For local apply, an environment value `DELIVERY_LABELS_ENABLED=false` disables writes (case-insensitive, no trimming); the calling repository's variable continues to gate the automatic jobs and is not fetched by this local command. Separate authorization is required regardless of opt-out settings.
 
-Discovery paginates `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100&page=N` and validates the complete list before any mutation; it never treats ordinary issues as PRs. Assignment reads are also paginated. Each PR is freshly re-read for identity and closed state, and apply shares the event cleanup's before-each-removal reopen check, whole-transient-set rescan, bounded retry, confirmed absence and DELETE-404 access checks. Open/reopened PRs are skipped, not relabeled; no definitions are created/deleted, no verdicts added, and unrelated assignments remain unchanged. Read/access/malformed-data and pagination-limit failures fail closed, not as empty results. Apply failures exit nonzero and identify the failed PR; earlier PRs may already have been cleaned, with no rollback. Inspect a fresh report before retrying.
+Discovery paginates `GET /repos/{owner}/{repo}/pulls?state=closed&per_page=100&page=N` and validates the complete list before any mutation; it never treats ordinary issues as PRs. Assignment reads are also paginated. Each PR is freshly re-read for identity and closed state, and apply shares the event cleanup's before-each-removal reopen check, whole-managed-set rescan, bounded retry, confirmed absence and DELETE-404 access checks. Open/reopened PRs are skipped, not relabeled; no definitions are created/deleted, no verdicts added, and unrelated assignments remain unchanged. Read/access/malformed-data and pagination-limit failures fail closed, not as empty results. Apply failures exit nonzero and identify the failed PR; earlier PRs may already have been cleaned, with no rollback. Inspect a fresh report before retrying.
 
-GitHub has no atomic delete-if-still-closed operation: reopening between the final state read and DELETE remains possible, just as for event cleanup. Concurrent label/review changes may prevent confirmed cleanup and must fail visibly. Pagination is a bounded best-effort snapshot, not a frozen repository transaction; concurrent closures can require a fresh report and another separately authorized apply. Runners should not add new review labels to closed PRs. A reopened PR keeps any retained Approved record and waits for its next review to set a label; no removed assignment is restored.
+GitHub has no atomic delete-if-still-closed operation: reopening between the final state read and DELETE remains possible, just as for event cleanup. Concurrent label/review changes may prevent confirmed cleanup and must fail visibly. Pagination is a bounded best-effort snapshot, not a frozen repository transaction; concurrent closures can require a fresh report and another separately authorized apply. Runners should not add new review labels to closed PRs. A reopened PR waits for its next review to set a label; no removed assignment is restored.
+
+### Manually dispatched sweep and consumer rollout
+
+For Actions-based recovery, copy `templates/review-label-sweep-caller.yml` to
+`.github/workflows/review-label-sweep.yml` in the repository to sweep. It forwards **only** `workflow_dispatch`
+to the isolated reusable `review-label-sweep.yml`. MyWorkflows includes `self-review-label-sweep.yml` for itself.
+The target is always `github.repository`, never a caller-supplied repository or PR code. The default `apply: false`
+uses read-only `github.token`, emits PR numbers and exact managed names in the summary, and mints no App token.
+Inspect that fresh report and obtain separate named-repository authorization before dispatching `apply: true`.
+Apply uses a separately minted repository-scoped App token with existing Pull requests write; opt-out prevents
+minting and writes. Both modes share the CLI's paginated, idempotent cleanup core and never change definitions
+or unrelated assignments. Failures are visible and fail the manual job; earlier removals may have completed.
+No automatic delivery, label or test event invokes this sweep. Neither mode was run against a real repository
+as part of implementation. With restrictive Actions policies, authorize the optional caller's `workflow_dispatch`
+path separately; do not apply live policy changes without named-repository consent.
+
+**Exactly what consumers need:** moving-main delivery callers already forwarding `closed` need **nothing** for
+all-role close cleanup. Pinned delivery callers update the workflow ref and matching `tools_ref` together.
+Recovery from late managed additions requires the separate `templates/review-labels-caller.yml` label-only caller
+and its existing Actions-policy authorization, if not already adopted (xrbuild's inspected workflow list has no
+such caller). Existing moving-main label callers need no edit; pinned label callers align both refs. Do not add
+label actions to delivery or CI. The optional manual sweep requires the new manual caller above, or the updated
+`delivery labels-sweep` CLI instead; no automatic historical backfill occurs. GITHUB_TOKEN-only merging paths
+need an event-producing merge identity or explicit cleanup invocation; the observed xrbuild merge used the
+maintainer identity and did emit `closed`. No permissions, policy or other repositories were changed here.
 
 ## Permissions and optional default pruning
 

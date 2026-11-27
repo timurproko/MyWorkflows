@@ -281,7 +281,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: delivery-review-label-cleanup-${{ github.event.pull_request.number }}
+      # Share the label-only reconciler's queue: a late labeled event must also clear closure.
+      group: delivery-review-label-reconciliation-${{ github.repository }}-${{ github.event.pull_request.number }}
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Check out trusted delivery tooling

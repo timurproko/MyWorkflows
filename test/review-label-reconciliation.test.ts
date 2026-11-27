@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import definitions from "./fixtures/bootstrap-labels.json";
 import { latestReviewAssignment, reconcileReviewLabels } from "../scripts/review-label-reconciliation.mjs";
+import { cleanupClosedReviewLabels } from "../scripts/review-label-cleanup.mjs";
 import { automationMain, runLabelAutomation } from "../scripts/run-label-automation.mjs";
 
 const repository = "owner/.repository";
@@ -266,19 +267,49 @@ describe("latest managed review-label reconciliation", () => {
     expect(source.assigned).toEqual([approved, "keep"]);
   });
 
-  it.each(["closed", "merged"])("does nothing for %s webhook PRs", async state => {
-    const source = fake();
+  it.each(["closed", "merged"])("clears all managed names for %s webhook PRs and repeated late additions", async state => {
+    const source = fake({ states: ["closed"], labels: [...names, "keep"] });
     const incoming = event();
     incoming.pull_request.state = state === "closed" ? "closed" : "open";
     incoming.pull_request.merged = state === "merged";
-    expect((await reconcile({ ...source, event: incoming })).disposition).toBe("closed");
-    expect(source.api).not.toHaveBeenCalled();
+    expect(await reconcile({ ...source, event: incoming })).toMatchObject({ disposition: "closed", cleanup: "removed" });
+    expect(source.assigned).toEqual(["keep"]);
+    expect(await reconcile({ ...source, event: incoming })).toMatchObject({ disposition: "closed", cleanup: "absent" });
+    source.assigned.push(approved); // An independent runner writes after the close job completed.
+    expect(await reconcile({ ...source, event: { ...incoming, label: { name: approved } } })).toMatchObject({ cleanup: "removed" });
+    expect(source.assigned).toEqual(["keep"]);
+    expect(writes(source.api).every(([method]) => method === "DELETE")).toBe(true);
   });
 
-  it.each([["closed"], ["open", "closed"], ["open", "open", "closed"], ["open", "open", "open", "closed"]])("stops on current closure %j", async (...states) => {
-    const source = fake({ states });
-    expect((await reconcile(source)).disposition).toBe("closed");
+  it.each([true, false])("never restores a verdict when reconciliation runs after close cleanup, merged=%s", async merged => {
+    const source = fake({ states: ["closed"], labels: [...names, "keep"] });
+    expect((await cleanupClosedReviewLabels({ repository, number: 61, manifest: definitions, api: source.api, apply: true })).disposition).toBe("removed");
+    const deletes = writes(source.api).length;
+    const stale = event(approved); // Queued before closure, with an old open webhook snapshot.
+    expect(await reconcile({ ...source, event: stale })).toMatchObject({ disposition: "closed", cleanup: "absent" });
+    expect(writes(source.api)).toHaveLength(deletes);
+    source.assigned.push(approved); // Late external write after close cleanup.
+    stale.pull_request.state = "closed";
+    stale.pull_request.merged = merged;
+    expect(await reconcile({ ...source, event: stale })).toMatchObject({ cleanup: "removed" });
+    expect(source.assigned).toEqual(["keep"]);
+    expect(writes(source.api).every(([method]) => method === "DELETE")).toBe(true);
+  });
+
+  it("does not trust a closed webhook over a live reopened PR", async () => {
+    const source = fake();
+    const incoming = event();
+    incoming.pull_request.state = "closed";
+    expect(await reconcile({ ...source, event: incoming })).toMatchObject({ cleanup: "reopened" });
     expect(writes(source.api)).toEqual([]);
+    expect(source.assigned).toEqual([review, rework, "keep"]);
+  });
+
+  it.each([["closed"], ["open", "closed"], ["open", "open", "closed"], ["open", "open", "open", "closed"]])("clears every role when a queued open event observes current closure %j", async (...states) => {
+    const source = fake({ states, labels: [...names, "keep"], events: names.map((name, index) => addition(name, index + 1)) });
+    expect((await reconcile(source)).disposition).toBe("closed");
+    expect(source.assigned).toEqual(["keep"]);
+    expect(writes(source.api).every(([method]) => method === "DELETE")).toBe(true);
   });
 
   it.each(["false", "False", "FALSE"])("opts out before even validating event or reading the API: %s", async enabled => {

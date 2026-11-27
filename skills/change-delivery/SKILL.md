@@ -205,9 +205,9 @@ Do not run it or any live label apply/prune without separate named-repository au
 - Complete old cleanup before replacement. Use one owner per PR or retain the label until that owner's last
   local reviewer ends; plain labels cannot coordinate independent overlapping controllers.
 - All three labels are advisory, never required checks or merge gates; absence is not approval. A retained
-  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes Build and Review
-  current/historical assignments; Approved stays as the record, including its aliases. No verdict is added;
-  unrelated labels remain untouched. A reopened PR keeps that record until the next review sets one;
+  verdict does not guarantee later commits were reviewed. Closed/merged cleanup removes all three managed roles'
+  current/historical assignments, including Approved and its aliases. No verdict is added;
+  unrelated labels remain untouched. A reopened PR waits until the next review sets one;
   removed assignments are not restored.
   Retain crew PR #7's lifecycle limits: no lease, heartbeat, timed crash expiry or automatic historical sweep. A lost runner
   may leave an open PR labeled until recovery or a person clears it. Crew integration is separate work in crew.
@@ -227,7 +227,7 @@ current/historical name, bot or person. It reads fresh assignments and ranks eac
 Ignore `unlabeled` events entirely when choosing the survivor. One assigned name missing an addition is oldest;
 two or more missing additions fail closed with a warning and no writes. Do not borrow another alias's history.
 It only removes conflicting managed assignments, never adds/restores labels or changes unrelated labels.
-Closed/merged PRs are no-ops; closure cleanup owns them. The existing opt-out applies before token minting or API reads.
+Closed/merged PRs use the shared all-role closure cleanup, including late additions after close. The existing opt-out applies before token minting or API reads.
 The per-PR multi-pending queue serializes this writer; history delays/API failures, queue overflow/cancellation and
 the non-atomic read/DELETE race remain best-effort limits, not a cross-controller lock or timed recovery guarantee.
 Adopt the separate `templates/review-labels-caller.yml` as `.github/workflows/review-labels.yml`, triggered by
@@ -238,7 +238,11 @@ check is published. Public repositories also authorize the new caller path in th
 no policy change or apply is automatic. See `docs/delivery-labels.md` for exact caller files and named-repository
 consent requirements. The earlier xrbuild CI label subscription was repaired separately; never reintroduce it.
 
-Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
+Closure cleanup needs no update for moving-main delivery callers already forwarding `closed`; pinned callers
+update the workflow ref and matching `tools_ref`. Late-addition recovery requires the separate label caller above.
+Optional manual dispatch uses `templates/review-label-sweep-caller.yml` as `.github/workflows/review-label-sweep.yml`,
+with `apply: false` by default. Only separately authorized `apply: true` removes all managed roles, including Approved aliases.
+Never dispatch a sweep as part of implementation. Historical recovery is manual-only: `delivery labels-sweep --repo owner/name` reports managed current/historical
 assignments on closed/merged PRs, read-only by default. Inspect a fresh report and obtain separate named-repository
 authorization before `delivery labels-sweep --repo owner/name --apply`; never run it automatically or as part of
 implementation. It uses the signed-in credential, paginates PRs/assignments, checks current closure before each
