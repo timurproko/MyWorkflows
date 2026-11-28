@@ -397,13 +397,21 @@ describe("trusted finalization publication", () => {
     const f = await fixture();
     const first = await f.reconcile();
     const originalBody = f.state.body;
+    // GitHub can retain the historical PR base after the canonical ref advances.
+    f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
     await git(f.seed, ["checkout", "--quiet", "develop"]);
-    await commit(f.seed, "feat: independent", { [path]: path === "openspec/config.yaml" ? "schema: spec-driven\n# independent comment\n" : "independent\n" });
+    const target = await commit(f.seed, "feat: independent", { [path]: path === "openspec/config.yaml" ? "schema: spec-driven\n# independent comment\n" : "independent\n" });
     await git(f.seed, ["push", "--quiet", "origin", "develop"]);
     await expect(f.reconcile()).resolves.toMatchObject({ disposition: "already-finalized", commits: [], bodyUpdated: false });
     expect(await f.remoteHead()).toBe(first.pushedHead);
     expect(f.state.body).toBe(originalBody);
-    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({ disposition: "ready-for-maintainer-integration" });
+    expect(f.state.baseSha).not.toBe(target);
+    const manifest = await f.remoteFile("openspec/changes/archive/2026-09-16-example/acceptance.md");
+    await expect(validateVersion3Candidate(f.apiReader(), 7)).resolves.toMatchObject({
+      disposition: "ready-for-maintainer-integration", targetSha: target,
+      pull: { base: { sha: f.state.baseSha }, head: { sha: first.pushedHead } },
+    });
+    expect(await f.remoteFile("openspec/changes/archive/2026-09-16-example/acceptance.md")).toBe(manifest);
     let reconciles = 0;
     const results = await refreshReadyPullRequests({ repository: "owner/repo", reconcileLinked: async () => { reconciles++; throw new Error("unexpected repair"); },
       request: async url => ({ status: 200, body: url.includes("/pulls?state=open") ? [{ number: 7 }]
@@ -411,6 +419,35 @@ describe("trusted finalization publication", () => {
         : { ...await f.apiReader().get(url), ...(url.endsWith("/pulls/7") ? { mergeable: true } : {}) } }) });
     expect(results[0]).toMatchObject({ disposition: "skipped", headSha: first.pushedHead });
     expect(reconciles).toBe(0);
+    expect(f.mutations).toHaveLength(1);
+  }, 120_000);
+
+  it.each(["malformed", "moved"])("refuses a %s canonical target despite an unchanged historical PR base", async mode => {
+    const f = await fixture();
+    const first = await f.reconcile();
+    f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
+    await git(f.seed, ["checkout", "--quiet", "develop"]);
+    const target = await commit(f.seed, "feat: independent target", { "src/other.txt": "independent\n" });
+    await git(f.seed, ["push", "--quiet", "origin", "develop"]);
+    const originalBody = f.state.body;
+    const api = f.apiReader();
+    let targetReads = 0;
+    const trees: string[] = [];
+    const reader = { ...api, async get(path: string) {
+      if (path.endsWith("/git/ref/heads/develop")) {
+        targetReads++;
+        if (mode === "malformed") return { object: { sha: "not-a-sha" } };
+        if (targetReads === 2) return { object: { sha: "f".repeat(40) } };
+      }
+      if (path.includes("/git/trees/")) trees.push(path);
+      return await api.get(path);
+    } };
+    await expect(validateVersion3Candidate(reader, 7)).rejects.toThrow(mode === "malformed" ? "delivery-target-identity" : "delivery-target-stale");
+    expect(targetReads).toBe(mode === "malformed" ? 1 : 2);
+    if (mode === "moved") expect(trees.some(path => path.includes(target))).toBe(true);
+    else expect(trees).toEqual([]);
+    expect(await f.remoteHead()).toBe(first.pushedHead);
+    expect(f.state.body).toBe(originalBody);
     expect(f.mutations).toHaveLength(1);
   }, 120_000);
 
@@ -471,6 +508,7 @@ describe("trusted finalization publication", () => {
   it("restores, merges develop, and re-finalizes a finalized head that fell behind",  async () => {
     const f = await fixture();
     await f.reconcile();
+    f.state.baseSha = (await f.reader.get(`${f.reader.prefix}/git/ref/heads/develop`)).object!.sha;
     await git(f.seed, ["checkout", "--quiet", "develop"]);
     const advanced = await commit(f.seed, "docs: other requirement", {
       "openspec/specs/example/spec.md": spec(`${requirement("Example behavior", "preserve existing behavior")}\n${requirement("Other behavior", "keep the other behavior")}`),

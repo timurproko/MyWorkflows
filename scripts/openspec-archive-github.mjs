@@ -107,16 +107,16 @@ export async function inspectVersion3DeliverySnapshot(reader, pull, implementati
 }
 
 /** Head integrity is verified first; this classifier then proves whether base advancement matters. */
-export async function inspectDeliveryBaseImpact(reader, pull, implementation, value) {
+export async function inspectDeliveryBaseImpact(reader, pull, implementation, value, { targetSha = pull.base.sha } = {}) {
   const cache = new Map([[pull.head.sha, value.snapshot]]);
   const snapshot = sha => {
     if (!cache.has(sha)) cache.set(sha, snapshotOpenSpec(reader, sha));
     return cache.get(sha);
   };
-  return await classifySpecBase({ baseline: value.manifest.specBaseSha, target: pull.base.sha, head: pull.head.sha,
+  return await classifySpecBase({ baseline: value.manifest.specBaseSha, target: targetSha, head: pull.head.sha,
     change: implementation.change, archive: implementation.archive, ancestor: reader.ancestor, snapshot,
     replay: options => replaySpecSnapshot({ ...options, body: pull.body, implementation, repository: reader.repository,
-      number: pull.number, targetSha: pull.base.sha }) });
+      number: pull.number, targetSha }) });
 }
 
 async function verifyAssociationRepairSource(reader, correctivePull, record) {
@@ -153,10 +153,13 @@ export async function validateVersion3Candidate(reader, number) {
     && pull.base?.repo?.full_name === reader.repository && pull.head?.repo?.full_name === reader.repository
     && SHA.test(pull.base?.sha ?? "") && SHA.test(pull.head?.sha ?? "")
     && files.length > 0 && files.length === pull.changed_files, "delivery-candidate-identity");
-  const target = await reader.get(`${reader.prefix}/git/ref/heads/${targetBranch()}`);
-  requireAcceptance(target.object?.sha === pull.base.sha, "delivery-target-stale");
+  const targetPath = `${reader.prefix}/git/ref/heads/${targetBranch()}`;
+  const target = await reader.get(targetPath);
+  const targetSha = target.object?.sha;
+  requireAcceptance(SHA.test(targetSha ?? ""), "delivery-target-identity");
   const value = await inspectVersion3DeliverySnapshot(reader, pull, implementation, pull.head.sha);
-  const impact = await inspectDeliveryBaseImpact(reader, pull, implementation, value);
+  // The PR API base can be historical; classify and replay against this trusted canonical snapshot instead.
+  const impact = await inspectDeliveryBaseImpact(reader, pull, implementation, value, { targetSha });
   requireAcceptance(impact.disposition === "valid", "delivery-spec-base-invalidated");
   await verifyAssociationRepairSource(reader, pull, value.associationRepair);
   const changed = new Set(files.flatMap(file => [file.filename, ...(file.status === "renamed" ? [file.previous_filename] : [])]));
@@ -178,7 +181,10 @@ export async function validateVersion3Candidate(reader, number) {
     }
     if (path.startsWith("openspec/specs/") && !specPaths.has(path)) throw archiveFailure("delivery-unexpected-openspec-path", path);
   }
-  return { disposition: "ready-for-maintainer-integration", pull, implementation, targetSha: target.object.sha, ...value };
+  // A historical PR base is allowed, but a target that moves during validation is not certified.
+  const currentTarget = await reader.get(targetPath);
+  requireAcceptance(currentTarget.object?.sha === targetSha, "delivery-target-stale");
+  return { disposition: "ready-for-maintainer-integration", pull, implementation, targetSha, ...value };
 }
 
 export async function findImplementationValidation(reader, pull) {
